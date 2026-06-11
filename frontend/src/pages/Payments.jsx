@@ -1,43 +1,133 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
-import { FiSearch, FiPlus, FiX } from 'react-icons/fi';
+import { FiSearch, FiPlus, FiX, FiUser } from 'react-icons/fi';
 import paymentService from '../services/paymentService';
 import memberService from '../services/memberService';
 import teamService from '../services/teamService';
+import chitService from '../services/chitService';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
+const EMPTY_FORM = {
+  chitScheme: '',
+  team: '',
+  member: '',
+  month: new Date().getMonth() + 1,
+  year: new Date().getFullYear(),
+  status: 'paid',
+};
+
 const Payments = () => {
   const [payments, setPayments] = useState([]);
-  const [members, setMembers] = useState([]);
-  const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ member: '', team: '', amount: '', month: new Date().getMonth() + 1, year: new Date().getFullYear(), status: 'paid' });
   const [saving, setSaving] = useState(false);
+
+  // Cascade dropdown state
+  const [schemes, setSchemes] = useState([]);
+  const [schemeTeams, setSchemeTeams] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [selectedTeam, setSelectedTeam] = useState(null);
+  const [selectedMemberObj, setSelectedMemberObj] = useState(null);
+  const [loadingTeams, setLoadingTeams] = useState(false);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
 
   const load = async () => {
     setLoading(true);
-    const [p, m, t] = await Promise.all([
-      paymentService.getAll({}).catch(() => []),
-      memberService.getAll().catch(() => []),
-      teamService.getAll().catch(() => []),
-    ]);
-    setPayments(p); setMembers(m); setTeams(t); setLoading(false);
+    const p = await paymentService.getAll({}).catch(() => []);
+    setPayments(p);
+    setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    load();
+    chitService.getAll().then(setSchemes).catch(() => []);
+  }, []);
+
+  const handleSchemeChange = async (schemeId) => {
+    setForm({ ...EMPTY_FORM, chitScheme: schemeId });
+    setSchemeTeams([]);
+    setTeamMembers([]);
+    setSelectedTeam(null);
+    setSelectedMemberObj(null);
+    if (!schemeId) return;
+    setLoadingTeams(true);
+    const teams = await teamService.getAll(schemeId).catch(() => []);
+    setSchemeTeams(teams);
+    setLoadingTeams(false);
+  };
+
+  const handleTeamChange = async (teamId) => {
+    setForm(prev => ({ ...prev, team: teamId, member: '' }));
+    setTeamMembers([]);
+    setSelectedMemberObj(null);
+    if (!teamId) { setSelectedTeam(null); return; }
+    setSelectedTeam(schemeTeams.find(t => t._id === teamId) || null);
+    setLoadingMembers(true);
+    const members = await memberService.getAll(teamId).catch(() => []);
+    setTeamMembers(members);
+    setLoadingMembers(false);
+  };
+
+  const handleMemberChange = async (memberId) => {
+    setForm(prev => ({ ...prev, member: memberId }));
+    if (!memberId) { setSelectedMemberObj(null); return; }
+    const memberObj = teamMembers.find(m => m._id === memberId) || null;
+    setSelectedMemberObj(memberObj);
+
+    // Check missed payments and warn
+    if (memberObj && selectedTeam?.startDate) {
+      const existing = await paymentService.getAll({ member: memberId }).catch(() => []);
+      const now = new Date();
+      const missed = [];
+      const d = new Date(new Date(selectedTeam.startDate).getFullYear(), new Date(selectedTeam.startDate).getMonth(), 1);
+      while (d < now) {
+        const mo = d.getMonth() + 1;
+        const yr = d.getFullYear();
+        if (!existing.find(p => p.month === mo && p.year === yr && p.status === 'paid')) {
+          missed.push(`${MONTHS[mo - 1]} ${yr}`);
+        }
+        d.setMonth(d.getMonth() + 1);
+      }
+      if (missed.length > 0) {
+        toast.warning(
+          `${memberObj.fullName} has ${missed.length} missed payment${missed.length > 1 ? 's' : ''}: ${missed.slice(0, 3).join(', ')}${missed.length > 3 ? ` +${missed.length - 3} more` : ''}`,
+          { position: 'top-right', autoClose: 6000 }
+        );
+      }
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.member || !form.amount) return toast.error('Member and amount are required');
+    if (!form.member || !form.team) return toast.error('Select scheme, team and member');
     setSaving(true);
     try {
-      await paymentService.create(form);
-      toast.success('Payment recorded');
-      setModal(false); load();
-    } catch { toast.error('Failed'); }
-    finally { setSaving(false); }
+      await paymentService.create({
+        member: form.member,
+        team: form.team,
+        amount: selectedMemberObj?.monthlyPadi || 0,
+        month: form.month,
+        year: form.year,
+        status: form.status,
+      });
+      toast.success('Payment recorded successfully');
+      setModal(false);
+      load();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to record payment');
+    } finally { setSaving(false); }
+  };
+
+  const openModal = () => {
+    setForm(EMPTY_FORM);
+    setSchemeTeams([]);
+    setTeamMembers([]);
+    setSelectedTeam(null);
+    setSelectedMemberObj(null);
+    setModal(true);
   };
 
   const filtered = payments.filter(p => {
@@ -46,8 +136,8 @@ const Payments = () => {
     return name.toLowerCase().includes(search.toLowerCase()) || mobile.includes(search);
   });
 
-  const totalPaid = payments.filter(p => p.status === 'paid').reduce((s, p) => s + p.amount, 0);
-  const totalDue = payments.filter(p => p.status === 'due').reduce((s, p) => s + p.amount, 0);
+  const totalPaid = payments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+  const totalDue = payments.filter(p => p.status === 'due').reduce((s, p) => s + (p.amount || 0), 0);
 
   return (
     <div>
@@ -56,7 +146,7 @@ const Payments = () => {
           <h2 className="text-2xl font-bold text-gray-800">Payments</h2>
           <p className="text-sm text-gray-500">Track and record all payment transactions</p>
         </div>
-        <button onClick={() => setModal(true)} className="flex items-center gap-2 px-4 py-2 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover">
+        <button onClick={openModal} className="flex items-center gap-2 px-4 py-2 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover">
           <FiPlus size={14} /> Record Payment
         </button>
       </div>
@@ -93,7 +183,7 @@ const Payments = () => {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Member', 'Team', 'Month / Year', 'Amount', 'Paid Date', 'Transaction ID', 'Status'].map(h => (
+                  {['Member', 'Team', 'Month / Year', 'Amount', 'Paid Date', 'Status'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -109,9 +199,8 @@ const Payments = () => {
                     <td className="px-5 py-4 text-sm text-gray-700">{MONTHS[p.month - 1]} {p.year}</td>
                     <td className="px-5 py-4 text-sm font-semibold text-gray-800">₹{p.amount?.toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-gray-600">{p.paidDate ? new Date(p.paidDate).toLocaleDateString('en-IN') : <span className="italic text-gray-300">—</span>}</td>
-                    <td className="px-5 py-4 text-xs text-gray-500 font-mono">{p.transactionId || '—'}</td>
                     <td className="px-5 py-4">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${p.status === 'paid' ? 'bg-green-100 text-green-600' : p.status === 'due' ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-500'}`}>{p.status}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${p.status === 'paid' ? 'bg-green-100 text-green-600' : p.status === 'due' ? 'bg-red-100 text-red-500' : 'bg-yellow-100 text-yellow-600'}`}>{p.status}</span>
                     </td>
                   </tr>
                 ))}
@@ -124,53 +213,143 @@ const Payments = () => {
       {/* Record Payment Modal */}
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <h3 className="text-lg font-bold text-gray-800">Record Payment</h3>
               <button onClick={() => setModal(false)} className="text-gray-400 hover:text-gray-600"><FiX size={18} /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-5 space-y-4">
+
+            <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+
+              {/* Step 1: Chit Scheme */}
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Member *</label>
-                <select value={form.member} onChange={e => setForm({...form, member: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                  <option value="">Select member</option>
-                  {members.map(m => <option key={m._id} value={m._id}>{m.fullName} — {m.mobile}</option>)}
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Chit Scheme *</label>
+                <select
+                  value={form.chitScheme}
+                  onChange={e => handleSchemeChange(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold"
+                >
+                  <option value="">Select chit scheme</option>
+                  {schemes.map(s => (
+                    <option key={s._id} value={s._id}>{s.name}</option>
+                  ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Team</label>
-                <select value={form.team} onChange={e => setForm({...form, team: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                  <option value="">Select team</option>
-                  {teams.map(t => <option key={t._id} value={t._id}>{t.teamName}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Amount (₹) *</label>
-                <input type="number" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+
+              {/* Step 2: Team (filtered by scheme) */}
+              {form.chitScheme && (
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Month</label>
-                  <select value={form.month} onChange={e => setForm({...form, month: Number(e.target.value)})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                    {MONTHS.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Team *</label>
+                  <select
+                    value={form.team}
+                    onChange={e => handleTeamChange(e.target.value)}
+                    disabled={loadingTeams}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold disabled:opacity-60"
+                  >
+                    <option value="">{loadingTeams ? 'Loading teams...' : 'Select team'}</option>
+                    {schemeTeams.map(t => (
+                      <option key={t._id} value={t._id}>{t.teamName}</option>
+                    ))}
+                  </select>
+                  {!loadingTeams && schemeTeams.length === 0 && (
+                    <p className="text-[10px] text-gray-400 mt-1">No teams found under this scheme</p>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Member (filtered by team) */}
+              {form.team && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Member *</label>
+                  <select
+                    value={form.member}
+                    onChange={e => handleMemberChange(e.target.value)}
+                    disabled={loadingMembers}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold disabled:opacity-60"
+                  >
+                    <option value="">{loadingMembers ? 'Loading members...' : 'Select member'}</option>
+                    {teamMembers.map(m => (
+                      <option key={m._id} value={m._id}>{m.fullName} — {m.mobile}</option>
+                    ))}
+                  </select>
+                  {!loadingMembers && teamMembers.length === 0 && (
+                    <p className="text-[10px] text-gray-400 mt-1">No members in this team</p>
+                  )}
+                </div>
+              )}
+
+              {/* Step 4: Member info card */}
+              {selectedMemberObj && (
+                <div className="rounded-xl border border-gold/30 bg-gold/5 p-4 flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-full bg-gold/20 flex items-center justify-center text-gold font-bold text-sm flex-shrink-0">
+                    <FiUser size={16} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-gray-800 text-sm">{selectedMemberObj.fullName}</p>
+                    <p className="text-xs text-gray-500">{selectedMemberObj.mobile}</p>
+                    {selectedMemberObj.address && <p className="text-xs text-gray-400 truncate">{selectedMemberObj.address}</p>}
+                    <div className="mt-2 flex items-center gap-4">
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-semibold">Monthly Amount</p>
+                        <p className="text-sm font-bold text-gold">₹{Number(selectedMemberObj.monthlyPadi || 0).toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-semibold">Total Months</p>
+                        <p className="text-sm font-bold text-gray-700">{selectedMemberObj.totalMonths}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 5: Month + Year */}
+              {form.member && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Month</label>
+                    <select
+                      value={form.month}
+                      onChange={e => setForm({...form, month: Number(e.target.value)})}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold"
+                    >
+                      {MONTHS.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Year</label>
+                    <input
+                      type="number"
+                      value={form.year}
+                      onChange={e => setForm({...form, year: Number(e.target.value)})}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Step 6: Status */}
+              {form.member && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Status</label>
+                  <select
+                    value={form.status}
+                    onChange={e => setForm({...form, status: e.target.value})}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold"
+                  >
+                    <option value="paid">Paid</option>
+                    <option value="unpaid">Unpaid</option>
+                    <option value="due">Due</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Year</label>
-                  <input type="number" value={form.year} onChange={e => setForm({...form, year: Number(e.target.value)})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Status</label>
-                <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                  <option value="paid">Paid</option>
-                  <option value="due">Due</option>
-                  <option value="pending">Pending</option>
-                </select>
-              </div>
-              <div className="flex gap-3 pt-2">
+              )}
+
+              <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setModal(false)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" disabled={saving} className="flex-1 py-2.5 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover disabled:opacity-50">
+                <button
+                  type="submit"
+                  disabled={saving || !form.member}
+                  className="flex-1 py-2.5 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover disabled:opacity-50"
+                >
                   {saving ? 'Saving...' : 'Record'}
                 </button>
               </div>

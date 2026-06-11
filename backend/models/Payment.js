@@ -8,7 +8,8 @@ const paymentSchema = new mongoose.Schema({
   year: { type: Number, required: true },
   paidDate: { type: Date },
   transactionId: { type: String, default: '' },
-  status: { type: String, enum: ['paid', 'due', 'pending'], default: 'pending' },
+  notes: { type: String, default: '' },
+  status: { type: String, enum: ['paid', 'unpaid', 'due', 'pending'], default: 'pending' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Payment', paymentSchema);

@@ -5,8 +5,8 @@ import { FiPlus, FiEdit2, FiTrash2, FiUsers, FiArrowRight, FiDownload } from 're
 import teamService from '../services/teamService';
 import chitService from '../services/chitService';
 
-const STATUSES = ['planning', 'filling', 'active', 'ongoing', 'completed'];
-const EMPTY = { teamName: '', teamCode: '', chitScheme: '', startDate: '', endDate: '', status: 'planning', memberLimit: 30 };
+const STATUSES = ['active', 'inactive', 'completed'];
+const EMPTY = { teamName: '', chitScheme: '', startDate: '', endDate: '', status: 'active', memberLimit: 30 };
 
 const STATUS_STYLE = {
   ongoing: 'bg-blue-100 text-blue-700',
@@ -44,13 +44,13 @@ const Teams = () => {
   const openCreate = () => { setEditing(null); setForm({...EMPTY, chitScheme: schemeId || (schemes[0]?._id || '')}); setModal(true); };
   const openEdit = (t) => {
     setEditing(t._id);
-    setForm({ teamName: t.teamName, teamCode: t.teamCode, chitScheme: t.chitScheme?._id || t.chitScheme, startDate: t.startDate?.slice(0,10) || '', endDate: t.endDate?.slice(0,10) || '', status: t.status, memberLimit: t.memberLimit });
+    setForm({ teamName: t.teamName, chitScheme: t.chitScheme?._id || t.chitScheme, startDate: t.startDate?.slice(0,10) || '', endDate: t.endDate?.slice(0,10) || '', status: t.status, memberLimit: t.memberLimit });
     setModal(true);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.teamName || !form.teamCode || !form.chitScheme || !form.startDate) return toast.error('Fill all required fields');
+    if (!form.teamName || !form.chitScheme || !form.startDate) return toast.error('Fill all required fields');
     setSaving(true);
     try {
       if (editing) { await teamService.update(editing, form); toast.success('Updated'); }
@@ -166,15 +166,9 @@ const Teams = () => {
                 <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Team Name *</label>
                 <input value={form.teamName} onChange={e => setForm({...form, teamName: e.target.value})} placeholder="Team Alpha-01" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Team Code *</label>
-                  <input value={form.teamCode} onChange={e => setForm({...form, teamCode: e.target.value})} placeholder="BCF-10L-001" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Member Limit</label>
-                  <input type="number" value={form.memberLimit} onChange={e => setForm({...form, memberLimit: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Member Limit</label>
+                <input type="number" value={form.memberLimit} onChange={e => setForm({...form, memberLimit: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Chit Scheme *</label>

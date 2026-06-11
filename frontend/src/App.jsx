@@ -11,7 +11,9 @@ import ChitSchemes from './pages/ChitSchemes';
 import Teams from './pages/Teams';
 import TeamDetails from './pages/TeamDetails';
 import Customers from './pages/Customers';
+import CustomerDetail from './pages/CustomerDetail';
 import Payments from './pages/Payments';
+import Reports from './pages/Reports';
 
 const App = () => (
   <AuthProvider>
@@ -32,8 +34,9 @@ const App = () => (
             <Route path="/teams" element={<Teams />} />
             <Route path="/teams/:teamId" element={<TeamDetails />} />
             <Route path="/customers" element={<Customers />} />
+            <Route path="/customers/:id" element={<CustomerDetail />} />
             <Route path="/payments" element={<Payments />} />
-            <Route path="/reports" element={<div className="p-8 text-gray-400">Reports — coming soon</div>} />
+            <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<div className="p-8 text-gray-400">Settings — coming soon</div>} />
           </Route>
         </Route>

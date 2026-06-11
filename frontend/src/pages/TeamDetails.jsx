@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { FiPlus, FiEdit2, FiTrash2, FiChevronDown, FiChevronUp, FiSearch, FiBell, FiDownload, FiX } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiChevronDown, FiChevronUp, FiSearch, FiX, FiCheck, FiAlertCircle } from 'react-icons/fi';
 import teamService from '../services/teamService';
 import memberService from '../services/memberService';
 import paymentService from '../services/paymentService';
+import customerService from '../services/customerService';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', aadhaarNumber: '', joiningDate: '', chitAmount: '', monthlyPadi: '', totalMonths: '20', notes: '', isPremium: false };
+const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', monthlyPadi: '', notes: '' };
 
 const TeamDetails = () => {
   const { teamId } = useParams();
@@ -22,8 +23,17 @@ const TeamDetails = () => {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(MEMBER_EMPTY);
   const [saving, setSaving] = useState(false);
-  const [payModal, setPayModal] = useState(null);
-  const [payForm, setPayForm] = useState({ amount: '', month: new Date().getMonth() + 1, year: new Date().getFullYear(), status: 'paid' });
+  const [monthInputs, setMonthInputs] = useState({});
+  const [savingMonth, setSavingMonth] = useState({});
+  const [totalCollection, setTotalCollection] = useState(0);
+  const [customers, setCustomers] = useState([]);
+  const [fetchingCustomer, setFetchingCustomer] = useState(false);
+  const [fetchResults, setFetchResults] = useState([]);
+
+  const loadTotalCollection = async () => {
+    const allPay = await paymentService.getAll({ team: teamId }).catch(() => []);
+    setTotalCollection(allPay.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0));
+  };
 
   const load = async () => {
     setLoading(true);
@@ -31,24 +41,114 @@ const TeamDetails = () => {
       teamService.getOne(teamId).catch(() => null),
       memberService.getAll(teamId).catch(() => []),
     ]);
-    setTeam(t); setMembers(m); setLoading(false);
+    setTeam(t);
+    setMembers(m);
+    setLoading(false);
+    loadTotalCollection();
   };
   useEffect(() => { load(); }, [teamId]);
+
+  const getTeamMonths = (t) => {
+    if (!t?.startDate) return [];
+    const months = [];
+    const start = new Date(t.startDate);
+    const total = Number(t.chitScheme?.durationMonths || 24);
+    for (let i = 0; i < total; i++) {
+      const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+      months.push({ month: d.getMonth() + 1, year: d.getFullYear(), label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}` });
+    }
+    return months;
+  };
 
   const toggleExpand = async (memberId) => {
     if (expanded === memberId) { setExpanded(null); return; }
     setExpanded(memberId);
-    if (!memberPayments[memberId]) {
-      const payments = await paymentService.getAll({ member: memberId }).catch(() => []);
+    let payments = memberPayments[memberId];
+    if (!payments) {
+      payments = await paymentService.getAll({ member: memberId }).catch(() => []);
       setMemberPayments(prev => ({ ...prev, [memberId]: payments }));
+    }
+    // Pre-fill month inputs from existing payments
+    const inputs = {};
+    payments.forEach(p => {
+      const key = `${memberId}_${p.month}_${p.year}`;
+      inputs[key] = { amount: p.amount || '', description: p.notes || '', id: p._id };
+    });
+    setMonthInputs(prev => ({ ...prev, ...inputs }));
+    // Notify missed past months
+    if (team) {
+      const now = new Date();
+      const missed = getTeamMonths(team).filter(({ month, year }) => {
+        const monthEnd = new Date(year, month - 1, 28);
+        return monthEnd < now && !payments.find(p => p.month === month && p.year === year && p.status === 'paid');
+      });
+      if (missed.length > 0) {
+        toast.warning(`${missed.length} missed payment${missed.length > 1 ? 's' : ''} for this member`, {
+          position: 'top-right', autoClose: 4000,
+        });
+      }
     }
   };
 
-  const openCreate = () => { setEditing(null); setForm({ ...MEMBER_EMPTY, chitAmount: team?.chitScheme?.monthlyAmount || '', monthlyPadi: team?.chitScheme?.monthlyAmount || '' }); setModal(true); };
+  const setMonthInput = (key, field, value) => {
+    setMonthInputs(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: value } }));
+  };
+
+  const saveMonthPayment = async (memberId, month, year) => {
+    const key = `${memberId}_${month}_${year}`;
+    const input = monthInputs[key] || {};
+    if (!input.amount) return toast.error('Enter an amount to save');
+    setSavingMonth(prev => ({ ...prev, [key]: true }));
+    try {
+      if (input.id) {
+        await paymentService.update(input.id, { amount: Number(input.amount), notes: input.description || '', status: 'paid' });
+      } else {
+        const created = await paymentService.create({
+          member: memberId, team: teamId, month, year,
+          amount: Number(input.amount), notes: input.description || '',
+          status: 'paid', paidDate: new Date(),
+        });
+        setMonthInputs(prev => ({ ...prev, [key]: { ...prev[key], id: created._id } }));
+      }
+      const payments = await paymentService.getAll({ member: memberId });
+      setMemberPayments(prev => ({ ...prev, [memberId]: payments }));
+      loadTotalCollection();
+      toast.success(`Payment saved for ${MONTHS[month - 1]} ${year}`, { position: 'top-right', autoClose: 2000 });
+    } catch { toast.error('Failed to save payment'); }
+    finally { setSavingMonth(prev => ({ ...prev, [key]: false })); }
+  };
+
+  const openCreate = async () => {
+    setEditing(null);
+    setForm(MEMBER_EMPTY);
+    setFetchResults([]);
+    setModal(true);
+    if (customers.length === 0) {
+      const list = await customerService.getAll().catch(() => []);
+      setCustomers(list);
+    }
+  };
   const openEdit = (m) => {
     setEditing(m._id);
-    setForm({ fullName: m.fullName, mobile: m.mobile, address: m.address || '', aadhaarNumber: m.aadhaarNumber || '', joiningDate: m.joiningDate?.slice(0,10) || '', chitAmount: m.chitAmount, monthlyPadi: m.monthlyPadi, totalMonths: m.totalMonths, notes: m.notes || '', isPremium: m.isPremium || false });
+    setForm({ fullName: m.fullName, mobile: m.mobile, address: m.address || '', monthlyPadi: m.monthlyPadi, notes: m.notes || '' });
     setModal(true);
+  };
+
+  const fetchCustomer = () => {
+    if (!form.mobile) return toast.error('Enter a mobile number first');
+    const q = form.mobile.trim();
+    const matches = customers.filter(c => c.mobile.includes(q));
+    if (matches.length === 0) {
+      setFetchResults([]);
+      toast.warning('No customer found with this mobile number', { position: 'top-right', autoClose: 3000 });
+    } else {
+      setFetchResults(matches);
+    }
+  };
+
+  const selectCustomer = (c) => {
+    setForm(prev => ({ ...prev, fullName: c.fullName, mobile: c.mobile, address: c.address || '' }));
+    setFetchResults([]);
   };
 
   const handleSubmit = async (e) => {
@@ -56,8 +156,12 @@ const TeamDetails = () => {
     if (!form.fullName || !form.mobile) return toast.error('Full name and mobile are required');
     setSaving(true);
     try {
-      if (editing) { await memberService.update(editing, form); toast.success('Member updated'); }
-      else { await memberService.create({ ...form, team: teamId }); toast.success('Member added'); }
+      const schemeData = {
+        chitAmount: team.chitScheme?.amount || 0,
+        totalMonths: team.chitScheme?.durationMonths || 24,
+      };
+      if (editing) { await memberService.update(editing, { ...form, ...schemeData }); toast.success('Member updated'); }
+      else { await memberService.create({ ...form, ...schemeData, team: teamId }); toast.success('Member added'); }
       setModal(false); load();
     } catch { toast.error('Save failed'); }
     finally { setSaving(false); }
@@ -68,35 +172,28 @@ const TeamDetails = () => {
     try { await memberService.remove(id); toast.success('Deleted'); load(); } catch { toast.error('Delete failed'); }
   };
 
-  const handleRecordPayment = async (e) => {
-    e.preventDefault();
-    if (!payForm.amount) return toast.error('Enter payment amount');
-    try {
-      await paymentService.create({ ...payForm, member: payModal, team: teamId });
-      setMemberPayments(prev => ({ ...prev, [payModal]: null }));
-      const payments = await paymentService.getAll({ member: payModal });
-      setMemberPayments(prev => ({ ...prev, [payModal]: payments }));
-      setPayModal(null);
-      toast.success('Payment recorded');
-    } catch { toast.error('Failed to record payment'); }
-  };
-
-  const initials = (name) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2);
+  const initials = (name) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   const filtered = members.filter(m => m.fullName.toLowerCase().includes(search.toLowerCase()) || m.mobile.includes(search));
 
   const now = new Date();
-  const monthsCompleted = team?.startDate ? Math.min(Math.floor((now - new Date(team.startDate)) / (30 * 24 * 3600 * 1000)), team.chitScheme?.durationMonths || 24) : 0;
+  const monthsCompleted = team?.startDate
+    ? Math.min(Math.floor((now - new Date(team.startDate)) / (30 * 24 * 3600 * 1000)), team.chitScheme?.durationMonths || 24)
+    : 0;
 
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (!team) return <div className="text-center py-12 text-red-400">Team not found</div>;
+
+  const teamMonths = getTeamMonths(team);
 
   return (
     <div>
       {/* Breadcrumb */}
       <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
         <button onClick={() => navigate('/teams')} className="hover:text-gold">Teams</button>
-        <span>/</span><button onClick={() => navigate(-1)} className="hover:text-gold">Team List</button>
-        <span>/</span><span className="text-gray-600">{team.teamName} Details</span>
+        <span>/</span>
+        <button onClick={() => navigate(-1)} className="hover:text-gold">Team List</button>
+        <span>/</span>
+        <span className="text-gray-600">{team.teamName} Details</span>
       </div>
       <h2 className="text-2xl font-bold text-gray-800 mb-6">{team.teamName} Details</h2>
 
@@ -105,10 +202,15 @@ const TeamDetails = () => {
         <div className="col-span-3 bg-white rounded-xl border border-gray-100 p-5 grid grid-cols-3 gap-4">
           <div>
             <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Current Active Scheme</p>
-            <p className="text-xl font-bold text-gray-800">₹{team.chitScheme?.amount ? (team.chitScheme.amount/100000).toFixed(0) : '—'} Lakh Premium Chit</p>
+            <p className="text-xl font-bold text-gray-800">
+              ₹{team.chitScheme?.amount ? (team.chitScheme.amount / 100000).toFixed(0) : '—'} Lakh Premium Chit
+            </p>
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs bg-gold/10 text-gold font-semibold px-2 py-0.5 rounded">{team.teamCode}</span>
-              {team.startDate && <span className="text-xs text-gray-400">{new Date(team.startDate).toLocaleDateString('en-IN', {month:'short', year:'numeric'})}</span>}
+              {team.startDate && (
+                <span className="text-xs text-gray-400">
+                  {new Date(team.startDate).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
+                </span>
+              )}
             </div>
           </div>
           <div className="text-center">
@@ -117,18 +219,16 @@ const TeamDetails = () => {
           </div>
           <div className="text-center">
             <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Months Completed</p>
-            <p className="text-4xl font-bold text-gray-800">{String(monthsCompleted).padStart(2,'0')}<span className="text-lg text-gray-400">/{team.chitScheme?.durationMonths || 24}</span></p>
+            <p className="text-4xl font-bold text-gray-800">
+              {String(monthsCompleted).padStart(2, '0')}
+              <span className="text-lg text-gray-400">/{team.chitScheme?.durationMonths || 24}</span>
+            </p>
           </div>
         </div>
-        <div className="bg-[#5C4A00] text-white rounded-xl p-5 flex flex-col justify-between">
-          <div>
-            <p className="text-xs text-gold uppercase font-semibold mb-1">Next Collection Target</p>
-            <p className="text-3xl font-bold">₹{team.chitScheme?.monthlyAmount?.toLocaleString() || '—'}</p>
-            <p className="text-xs text-gold/70 mt-2">Due Date: 15th of this month</p>
-          </div>
-          <button className="mt-3 w-full py-2 bg-white text-[#5C4A00] text-xs font-bold rounded-lg hover:bg-gold/10 flex items-center justify-center gap-2">
-            <FiBell size={12} /> Send Reminders
-          </button>
+        <div className="bg-[#5C4A00] text-white rounded-xl p-5 flex flex-col justify-center">
+          <p className="text-xs text-gold uppercase font-semibold mb-1">Total Collection</p>
+          <p className="text-3xl font-bold">₹{totalCollection.toLocaleString()}</p>
+          <p className="text-xs text-gold/70 mt-2">All payments collected</p>
         </div>
       </div>
 
@@ -156,12 +256,15 @@ const TeamDetails = () => {
           filtered.map(m => {
             const isExp = expanded === m._id;
             const payments = memberPayments[m._id] || [];
-            const lastPayment = payments[0];
-            const currentStatus = lastPayment?.status === 'paid' ? `Paid (${MONTHS[lastPayment.month - 1]})` : `Due (${MONTHS[new Date().getMonth()]})`;
+            const totalPaid = payments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
 
             return (
               <div key={m._id} className="border-b border-gray-100 last:border-0">
-                <div className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50" onClick={() => toggleExpand(m._id)}>
+                {/* Member row — name + total paid */}
+                <div
+                  className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                  onClick={() => toggleExpand(m._id)}
+                >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-gold/20 flex items-center justify-center text-gold text-xs font-bold flex-shrink-0">
                       {initials(m.fullName)}
@@ -169,26 +272,30 @@ const TeamDetails = () => {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-semibold text-gray-800 text-sm">{m.fullName}</p>
-                        {m.isPremium && <span className="text-[9px] bg-gold text-white font-bold px-1.5 py-0.5 rounded uppercase">Premium</span>}
+                        {m.isPremium && (
+                          <span className="text-[9px] bg-gold text-white font-bold px-1.5 py-0.5 rounded uppercase">Premium</span>
+                        )}
                       </div>
                       <p className="text-xs text-gray-400">{m.mobile}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <p className="text-xs text-gray-400 uppercase font-semibold">Current Status</p>
-                      <p className={`text-sm font-semibold ${lastPayment?.status === 'paid' ? 'text-green-600' : 'text-red-500'}`}>{currentStatus}</p>
+                      <p className="text-xs text-gray-400 uppercase font-semibold">Amount Paid</p>
+                      <p className="text-sm font-bold text-green-600">₹{totalPaid.toLocaleString()}</p>
                     </div>
                     {isExp ? <FiChevronUp size={16} className="text-gray-400" /> : <FiChevronDown size={16} className="text-gray-400" />}
                   </div>
                 </div>
 
+                {/* Expanded panel */}
                 {isExp && (
                   <div className="px-5 pb-5 bg-gray-50 border-t border-gray-100">
-                    <div className="grid grid-cols-2 gap-5 mt-4">
-                      {/* Personal Details */}
+                    <div className="grid grid-cols-2 gap-6 mt-4">
+
+                      {/* Left: Personal Details */}
                       <div>
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-1.5"><FiPlus size={12} className="opacity-0" />Personal Details</p>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Personal Details</p>
                         <div className="space-y-2 text-sm">
                           <div><p className="text-xs text-gray-400">Full Legal Name</p><p className="font-medium text-gray-800">{m.fullName}</p></div>
                           <div><p className="text-xs text-gray-400">Mobile Number</p><p className="font-medium text-gray-800">{m.mobile}</p></div>
@@ -199,49 +306,86 @@ const TeamDetails = () => {
                         <div className="grid grid-cols-2 gap-3 mt-4 p-3 bg-white rounded-lg border border-gray-100">
                           <div><p className="text-xs text-gray-400">Chit Amount</p><p className="font-bold text-gray-800">₹{Number(m.chitAmount).toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">Monthly Pay</p><p className="font-bold text-gray-800">₹{Number(m.monthlyPadi).toLocaleString()}</p></div>
-                          <div><p className="text-xs text-gray-400">Total Paid</p><p className="font-bold text-gray-800">₹{(payments.filter(p => p.status === 'paid').reduce((s, p) => s + p.amount, 0)).toLocaleString()}</p></div>
+                          <div><p className="text-xs text-gray-400">Total Paid</p><p className="font-bold text-gray-800">₹{totalPaid.toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">Months Paid</p><p className="font-bold text-gray-800">{payments.filter(p => p.status === 'paid').length} / {m.totalMonths}</p></div>
                         </div>
                         <div className="flex gap-2 mt-3">
-                          <button onClick={() => openEdit(m)} className="flex-1 py-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white">Edit Member Profile</button>
-                          <button onClick={() => handleDelete(m._id)} className="px-3 py-2 border border-red-100 rounded-lg text-xs font-semibold text-red-500 hover:bg-red-50"><FiTrash2 size={12} /></button>
+                          <button
+                            onClick={e => { e.stopPropagation(); openEdit(m); }}
+                            className="flex-1 py-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white"
+                          >
+                            Edit Member Profile
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); handleDelete(m._id); }}
+                            className="px-3 py-2 border border-red-100 rounded-lg text-xs font-semibold text-red-500 hover:bg-red-50"
+                          >
+                            <FiTrash2 size={12} />
+                          </button>
                         </div>
                       </div>
 
-                      {/* Payment History */}
+                      {/* Right: Monthly Payment Grid */}
                       <div>
-                        <div className="flex items-center justify-between mb-3">
-                          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">Payment History</p>
-                          <div className="flex gap-2">
-                            <button className="flex items-center gap-1 text-xs text-gray-500 border border-gray-200 px-2 py-1 rounded hover:bg-white"><FiDownload size={10} /> Excel</button>
-                            <button onClick={() => { setPayModal(m._id); setPayForm({ amount: m.monthlyPadi, month: new Date().getMonth() + 1, year: new Date().getFullYear(), status: 'paid' }); }} className="flex items-center gap-1 text-xs bg-[#5C4A00] text-white px-2 py-1 rounded hover:bg-gold"><FiPlus size={10} /> Record Payment</button>
-                          </div>
+                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Monthly Payments</p>
+                        <div className="space-y-2 max-h-[440px] overflow-y-auto pr-1">
+                          {teamMonths.length === 0 && (
+                            <p className="text-xs text-gray-400 py-4 text-center">No months available — set a start date for this team.</p>
+                          )}
+                          {teamMonths.map(({ month, year, label }) => {
+                            const key = `${m._id}_${month}_${year}`;
+                            const input = monthInputs[key] || {};
+                            const isPaid = !!input.id;
+                            const isSaving = !!savingMonth[key];
+                            const isPast = new Date(year, month - 1, 28) < now;
+
+                            return (
+                              <div
+                                key={key}
+                                className={`rounded-lg border p-3 bg-white ${isPaid ? 'border-green-200' : isPast ? 'border-orange-200' : 'border-gray-100'}`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className="w-20 flex-shrink-0">
+                                    <p className="text-xs font-bold text-gray-700">{label}</p>
+                                    {isPaid && (
+                                      <span className="text-[10px] text-green-600 font-semibold flex items-center gap-0.5 mt-0.5">
+                                        <FiCheck size={9} /> Paid
+                                      </span>
+                                    )}
+                                    {!isPaid && isPast && (
+                                      <span className="text-[10px] text-orange-500 font-semibold flex items-center gap-0.5 mt-0.5">
+                                        <FiAlertCircle size={9} /> Missed
+                                      </span>
+                                    )}
+                                  </div>
+                                  <input
+                                    type="number"
+                                    value={input.amount || ''}
+                                    onChange={e => setMonthInput(key, 'amount', e.target.value)}
+                                    placeholder="₹ Amount"
+                                    className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs outline-none focus:border-gold"
+                                  />
+                                  <button
+                                    onClick={() => saveMonthPayment(m._id, month, year)}
+                                    disabled={isSaving}
+                                    className="px-3 py-1.5 bg-gold text-white text-xs font-semibold rounded hover:bg-gold-hover disabled:opacity-50 flex-shrink-0"
+                                  >
+                                    {isSaving ? '...' : 'Save'}
+                                  </button>
+                                </div>
+                                <textarea
+                                  value={input.description || ''}
+                                  onChange={e => setMonthInput(key, 'description', e.target.value)}
+                                  placeholder="Description (optional)"
+                                  rows={1}
+                                  className="mt-2 w-full border border-gray-100 rounded px-2 py-1 text-xs outline-none focus:border-gold resize-none text-gray-500 placeholder-gray-300"
+                                />
+                              </div>
+                            );
+                          })}
                         </div>
-                        {payments.length === 0 ? (
-                          <p className="text-xs text-gray-400 py-4 text-center">No payment records</p>
-                        ) : (
-                          <table className="w-full text-xs">
-                            <thead><tr className="border-b border-gray-100">
-                              <th className="text-left py-2 text-gray-400 font-semibold">Month</th>
-                              <th className="text-right py-2 text-gray-400 font-semibold">Amount</th>
-                              <th className="text-right py-2 text-gray-400 font-semibold">Date</th>
-                              <th className="text-right py-2 text-gray-400 font-semibold">Status</th>
-                            </tr></thead>
-                            <tbody>
-                              {payments.map(p => (
-                                <tr key={p._id} className="border-b border-gray-50">
-                                  <td className="py-2 text-gray-700">{MONTHS[p.month - 1]} {p.year}</td>
-                                  <td className="py-2 text-right text-gray-700">₹{p.amount?.toLocaleString()}</td>
-                                  <td className="py-2 text-right text-gray-500">{p.paidDate ? new Date(p.paidDate).toLocaleDateString('en-IN') : <span className="italic text-gray-300">Pending</span>}</td>
-                                  <td className="py-2 text-right">
-                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${p.status === 'paid' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-500'}`}>{p.status}</span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        )}
                       </div>
+
                     </div>
                   </div>
                 )}
@@ -254,110 +398,97 @@ const TeamDetails = () => {
       {/* Add/Edit Member Modal */}
       {modal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl">
             <div className="p-5 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-gray-800">{editing ? 'Edit Member' : 'New Member Registration'}</h3>
+                <h3 className="text-lg font-bold text-gray-800">{editing ? 'Edit Member' : 'Add Member'}</h3>
                 <p className="text-xs text-gold">{team.teamName}</p>
               </div>
               <button onClick={() => setModal(false)} className="text-gray-400 hover:text-gray-600"><FiX size={18} /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Full Name *</label>
-                  <input value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} placeholder="Enter member name" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Mobile Number *</label>
-                  <input value={form.mobile} onChange={e => setForm({...form, mobile: e.target.value})} placeholder="+91 00000 00000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-              </div>
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
+
+              {/* Mobile + fetch */}
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Full Address</label>
-                <input value={form.address} onChange={e => setForm({...form, address: e.target.value})} placeholder="House no, Street, Landmark, City" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Mobile Number *</label>
+                <div className="flex gap-2">
+                  <input
+                    value={form.mobile}
+                    onChange={e => { setForm({...form, mobile: e.target.value}); setFetchResults([]); }}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), fetchCustomer())}
+                    placeholder="Enter mobile number"
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold"
+                  />
+                  <button
+                    type="button"
+                    onClick={fetchCustomer}
+                    disabled={fetchingCustomer}
+                    className="px-4 py-2 bg-gold text-white text-xs font-semibold rounded-lg hover:bg-gold-hover disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {fetchingCustomer ? '...' : 'Fetch →'}
+                  </button>
+                </div>
+
+                {/* Results list */}
+                {fetchResults.length > 0 && (
+                  <div className="mt-2 border border-gray-200 rounded-lg overflow-hidden">
+                    <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-100">
+                      <p className="text-[10px] font-bold text-gray-500 uppercase">{fetchResults.length} result{fetchResults.length > 1 ? 's' : ''} found — click to select</p>
+                    </div>
+                    {fetchResults.map(c => (
+                      <button
+                        key={c._id}
+                        type="button"
+                        onClick={() => selectCustomer(c)}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gold/5 border-b border-gray-50 last:border-0 text-left transition-colors"
+                      >
+                        <div className="w-7 h-7 rounded-full bg-gold/20 flex items-center justify-center text-gold text-[10px] font-bold flex-shrink-0">
+                          {c.fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800">{c.fullName}</p>
+                          <p className="text-xs text-gray-400 truncate">{c.mobile}{c.address ? ` · ${c.address}` : ''}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Aadhaar Number</label>
-                  <input value={form.aadhaarNumber} onChange={e => setForm({...form, aadhaarNumber: e.target.value})} placeholder="XXXX XXXX XXXX" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Joining Date</label>
-                  <input type="date" value={form.joiningDate} onChange={e => setForm({...form, joiningDate: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Chit Amount (₹)</label>
-                  <input type="number" value={form.chitAmount} onChange={e => setForm({...form, chitAmount: e.target.value})} placeholder="5,00,000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Monthly Padi (₹)</label>
-                  <input type="number" value={form.monthlyPadi} onChange={e => setForm({...form, monthlyPadi: e.target.value})} placeholder="10,000" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-              </div>
+
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Total Months</label>
-                <select value={form.totalMonths} onChange={e => setForm({...form, totalMonths: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                  {[12,18,20,24,30,36].map(n => <option key={n} value={n}>{n} Months</option>)}
-                </select>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Full Name *</label>
+                <input value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} placeholder="Member name (auto-filled after fetch)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="isPremium" checked={form.isPremium} onChange={e => setForm({...form, isPremium: e.target.checked})} className="accent-gold" />
-                <label htmlFor="isPremium" className="text-sm text-gray-600">Premium Member</label>
-              </div>
+
+              {/* Scheme info (readonly) */}
+              {team.chitScheme && (
+                <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Chit Amount</p>
+                    <p className="text-sm font-bold text-gray-700">₹{Number(team.chitScheme.amount || 0).toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-semibold">Total Months</p>
+                    <p className="text-sm font-bold text-gray-700">{team.chitScheme.durationMonths || 24} months</p>
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Description / Notes</label>
-                <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} rows={2} placeholder="Add any special instructions or member notes..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold resize-none" />
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Monthly Padi (₹) *</label>
+                <input type="number" value={form.monthlyPadi} onChange={e => setForm({...form, monthlyPadi: e.target.value})} placeholder="Enter monthly amount" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
-              <div className="flex gap-3 pt-2">
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Notes</label>
+                <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} rows={2} placeholder="Any notes..." className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold resize-none" />
+              </div>
+
+              <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setModal(false)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
                 <button type="submit" disabled={saving} className="flex-1 py-2.5 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover disabled:opacity-50">
-                  {saving ? 'Saving...' : editing ? 'Update Member' : 'Save Member'}
+                  {saving ? 'Saving...' : editing ? 'Update' : 'Save Member'}
                 </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Record Payment Modal */}
-      {payModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-gray-800">Record Payment</h3>
-              <button onClick={() => setPayModal(null)} className="text-gray-400 hover:text-gray-600"><FiX size={18} /></button>
-            </div>
-            <form onSubmit={handleRecordPayment} className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Amount (₹) *</label>
-                <input type="number" value={payForm.amount} onChange={e => setPayForm({...payForm, amount: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Month</label>
-                  <select value={payForm.month} onChange={e => setPayForm({...payForm, month: Number(e.target.value)})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                    {MONTHS.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Year</label>
-                  <input type="number" value={payForm.year} onChange={e => setPayForm({...payForm, year: Number(e.target.value)})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Status</label>
-                <select value={payForm.status} onChange={e => setPayForm({...payForm, status: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
-                  <option value="paid">Paid</option>
-                  <option value="due">Due</option>
-                  <option value="pending">Pending</option>
-                </select>
-              </div>
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setPayModal(null)} className="flex-1 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-50">Cancel</button>
-                <button type="submit" className="flex-1 py-2.5 bg-gold text-white rounded-lg text-sm font-semibold hover:bg-gold-hover">Save Payment</button>
               </div>
             </form>
           </div>
