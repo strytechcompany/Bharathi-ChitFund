@@ -1,39 +1,27 @@
-import axios from 'axios';
+const DUMMY = { username: 'admin', password: 'admin123' };
 
-const API_URL = 'http://localhost:5000/api/auth';
-
-const login = async (username, password) => {
-  const response = await axios.post(`${API_URL}/login`, { username, password });
-  return response.data;
-};
-
-const verifyOTP = async (email, otp) => {
-  const response = await axios.post(`${API_URL}/verify-otp`, { email, otp });
-  if (response.data.token) {
-    localStorage.setItem('token', response.data.token);
+const login = (username, password) => {
+  if (username === DUMMY.username && password === DUMMY.password) {
+    const user = { username: 'admin', name: 'Admin User', role: 'SUPER ADMIN' };
+    localStorage.setItem('bharathi_user', JSON.stringify(user));
+    return { success: true, user };
   }
-  return response.data;
-};
-
-const getMe = async () => {
-  const token = localStorage.getItem('token');
-  if (!token) return null;
-
-  const response = await axios.get(`${API_URL}/me`, {
-    headers: {
-      Authorization: `Bearer ${token}`
-    }
-  });
-  return response.data;
+  throw new Error('Invalid username or password');
 };
 
 const logout = () => {
-  localStorage.removeItem('token');
+  localStorage.removeItem('bharathi_user');
 };
 
-export default {
-  login,
-  verifyOTP,
-  getMe,
-  logout
+const getCurrentUser = () => {
+  try {
+    const u = localStorage.getItem('bharathi_user');
+    return u ? JSON.parse(u) : null;
+  } catch {
+    return null;
+  }
 };
+
+const isAuthenticated = () => !!getCurrentUser();
+
+export default { login, logout, getCurrentUser, isAuthenticated };
