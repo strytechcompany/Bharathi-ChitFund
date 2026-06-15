@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  FiGrid, FiList, FiUsers, FiUser, FiCreditCard, FiBarChart2, FiSettings, FiPlus
+  FiGrid, FiList, FiUsers, FiUser, FiCreditCard, FiBarChart2, FiSettings, FiPlus, FiBell
 } from 'react-icons/fi';
 import { AuthContext } from '../context/AuthContext';
 
@@ -11,6 +11,7 @@ const nav = [
   { to: '/teams', icon: FiUsers, label: 'Teams' },
   { to: '/customers', icon: FiUser, label: 'Customers' },
   { to: '/payments', icon: FiCreditCard, label: 'Payments' },
+  { to: '/notifications', icon: FiBell, label: 'Notifications' },
   { to: '/reports', icon: FiBarChart2, label: 'Reports' },
   { to: '/settings', icon: FiSettings, label: 'Settings' },
 ];

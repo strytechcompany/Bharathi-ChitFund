@@ -15,6 +15,8 @@ import CustomerDetail from './pages/CustomerDetail';
 import Payments from './pages/Payments';
 import Reports from './pages/Reports';
 
+import Notifications from './pages/Notifications';
+
 const App = () => (
   <AuthProvider>
     <Router>
@@ -37,6 +39,7 @@ const App = () => (
             <Route path="/customers/:id" element={<CustomerDetail />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<div className="p-8 text-gray-400">Settings — coming soon</div>} />
           </Route>
         </Route>
