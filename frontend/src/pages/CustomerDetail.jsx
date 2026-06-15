@@ -19,12 +19,86 @@ const genMonths = (startDate, durationMonths) => {
   return months;
 };
 
+const getCalendarWeeks = (team) => {
+  if (!team?.startDate) return [];
+  const start = new Date(team.startDate);
+  start.setHours(0,0,0,0);
+  const end = team.endDate ? new Date(team.endDate) : new Date(new Date(team.startDate).setMonth(start.getMonth() + (team.chitScheme?.durationMonths || 24)));
+  end.setHours(23,59,59,999);
+
+  let cur = new Date(start);
+  cur.setDate(cur.getDate() - cur.getDay()); // go back to Sunday
+
+  const weeks = [];
+  let weekIndex = 1;
+  let currentMonthKey = `${start.getFullYear()}-${start.getMonth() + 1}`;
+
+  while (cur <= end) {
+    const weekStart = new Date(cur);
+    const weekMonthKey = `${weekStart.getFullYear()}-${weekStart.getMonth() + 1}`;
+    
+    if (weekMonthKey !== currentMonthKey) {
+      weekIndex = 1;
+      currentMonthKey = weekMonthKey;
+    }
+
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      if (d >= start && d <= end) {
+        days.push(d);
+      }
+    }
+
+    if (days.length > 0) {
+      weeks.push({
+        monthKey: weekMonthKey,
+        weekNum: weekIndex++,
+        days: days,
+        label: `${days[0].getDate()} ${MONTHS[days[0].getMonth()]} - ${days[days.length-1].getDate()} ${MONTHS[days[days.length-1].getMonth()]}`
+      });
+    }
+    cur.setDate(cur.getDate() + 7);
+  }
+  return weeks;
+};
+
+const getDaysInMonth = (team, m, y) => {
+  if (!team?.startDate) return [];
+  const teamStart = new Date(team.startDate);
+  teamStart.setHours(0,0,0,0);
+  const teamEnd = team.endDate ? new Date(team.endDate) : new Date(new Date(team.startDate).setMonth(teamStart.getMonth() + (team.chitScheme?.durationMonths || 24)));
+  teamEnd.setHours(23,59,59,999);
+
+  const days = [];
+  const date = new Date(y, m - 1, 1);
+  while (date.getMonth() === m - 1) {
+    const cur = new Date(date);
+    if (cur >= teamStart && cur <= teamEnd) {
+      days.push(cur);
+    }
+    date.setDate(date.getDate() + 1);
+  }
+  return days;
+};
+
 const CustomerDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [customer, setCustomer] = useState(null);
   const [groups, setGroups] = useState([]); // [{ scheme, teams: [{ member, team, payments }] }]
   const [loading, setLoading] = useState(true);
+  const [expandedTeams, setExpandedTeams] = useState({});
+  const [expandedMonth, setExpandedMonth] = useState({});
+
+  const toggleTeam = (teamId) => {
+    setExpandedTeams(prev => ({ ...prev, [teamId]: !prev[teamId] }));
+  };
+
+  const toggleMonth = (key) => {
+    setExpandedMonth(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   useEffect(() => {
     const fetchAll = async () => {
@@ -140,7 +214,10 @@ const CustomerDetail = () => {
             return (
               <div key={ti} className="bg-white rounded-xl border border-gray-100 mb-4 overflow-hidden">
                 {/* Team header */}
-                <div className="px-5 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                <div 
+                  className="px-5 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between cursor-pointer hover:bg-gray-100 transition-colors"
+                  onClick={() => toggleTeam(team?._id || ti)}
+                >
                   <div>
                     <p className="font-bold text-gray-800">{team?.teamName || '—'}</p>
                     <p className="text-xs text-gray-400 mt-0.5">
@@ -169,73 +246,145 @@ const CustomerDetail = () => {
                 </div>
 
                 {/* Month payment table */}
-                {months.length === 0 ? (
-                  <p className="text-xs text-gray-400 p-5 text-center">No start date set for this team</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-max text-xs">
-                      <thead>
-                        <tr className="border-b border-gray-100">
-                          <th className="text-left px-4 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider sticky left-0 bg-white w-28">Month</th>
-                          <th className="text-right px-4 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Amount</th>
-                          <th className="text-center px-4 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Status</th>
-                          <th className="text-left px-4 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Paid Date</th>
-                          <th className="text-left px-4 py-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Notes</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {months.map(({ month, year, label }) => {
-                          const payment = payments.find(p => p.month === month && p.year === year);
-                          const monthDate = new Date(year, month - 1, 28);
-                          const isPast = monthDate < now;
-                          const isFuture = new Date(year, month - 1, 1) > now;
+                {expandedTeams[team?._id || ti] && (
+                  months.length === 0 ? (
+                    <p className="text-xs text-gray-400 p-5 text-center">No start date set for this team</p>
+                  ) : (
+                    <div className="p-4 border-t border-gray-100 bg-white">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
+                      {months.map(({ month, year, label }) => {
+                        const monthDate = new Date(year, month - 1, 28);
+                        const isPast = monthDate < now;
+                        const isFuture = new Date(year, month - 1, 1) > now;
+                        const freq = member.paymentFrequency || 'monthly';
+                        const monthKey = `${team?._id || ti}_${year}_${month}`;
 
-                          let statusEl;
-                          if (payment?.status === 'paid') {
-                            statusEl = (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-bold uppercase text-[10px]">
-                                <FiCheck size={9} /> Paid
-                              </span>
-                            );
-                          } else if (payment?.status === 'due') {
-                            statusEl = <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-500 font-bold uppercase text-[10px]">Due</span>;
-                          } else if (payment?.status === 'unpaid') {
-                            statusEl = <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-600 font-bold uppercase text-[10px]">Unpaid</span>;
-                          } else if (isFuture) {
-                            statusEl = <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 font-bold uppercase text-[10px]">Upcoming</span>;
-                          } else if (isPast) {
-                            statusEl = (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 text-orange-500 font-bold uppercase text-[10px]">
-                                <FiAlertCircle size={9} /> Missed
-                              </span>
-                            );
-                          } else {
-                            statusEl = (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-500 font-bold uppercase text-[10px]">
-                                <FiClock size={9} /> Current
-                              </span>
-                            );
+                        // Filter payments for this specific month/year
+                        const monthPayments = payments.filter(p => p.month === month && p.year === year);
+                        
+                        let cumulativeAmount = 0;
+                        let progressLabel = '';
+                        let isPaid = false;
+                        let statusEl;
+                        let paidDate = null;
+                        let notes = null;
+                        
+                        let subItems = [];
+
+                        if (freq === 'daily') {
+                          const daysInMonth = getDaysInMonth(team, month, year);
+                          const totalDays = daysInMonth.length;
+                          const paidDaysCount = monthPayments.filter(p => p.status === 'paid').length;
+                          cumulativeAmount = monthPayments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+                          isPaid = paidDaysCount > 0 && paidDaysCount === totalDays;
+                          progressLabel = `${paidDaysCount} / ${totalDays} Days`;
+                          subItems = daysInMonth.map(d => {
+                            const p = monthPayments.find(pay => pay.day === d.getDate());
+                            return {
+                              label: `${d.getDate()} ${label.split(' ')[0]}`,
+                              payment: p,
+                              isPast: d < now,
+                              isFuture: d > now
+                            };
+                          });
+                        } else if (freq === 'weekly') {
+                          const weeksInMonth = getCalendarWeeks(team).filter(w => w.monthKey === `${year}-${month}`);
+                          const totalWeeks = weeksInMonth.length;
+                          const paidWeeksCount = monthPayments.filter(p => p.status === 'paid').length;
+                          cumulativeAmount = monthPayments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+                          isPaid = paidWeeksCount > 0 && paidWeeksCount === totalWeeks;
+                          progressLabel = `${paidWeeksCount} / ${totalWeeks} Weeks`;
+                          subItems = weeksInMonth.map(w => {
+                            const p = monthPayments.find(pay => pay.week === w.weekNum);
+                            return {
+                              label: `Week ${w.weekNum}`,
+                              payment: p,
+                              isPast: w.days[0] < now,
+                              isFuture: w.days[0] > now
+                            };
+                          });
+                        } else {
+                          // Monthly
+                          const payment = monthPayments[0];
+                          if (payment) {
+                            cumulativeAmount = payment.amount || 0;
+                            isPaid = payment.status === 'paid';
+                            paidDate = payment.paidDate;
+                            notes = payment.notes;
                           }
+                        }
 
-                          return (
-                            <tr key={`${month}-${year}`} className={`border-b border-gray-50 last:border-0 ${payment?.status === 'paid' ? 'bg-green-50/30' : isPast && !payment ? 'bg-orange-50/30' : ''}`}>
-                              <td className="px-4 py-3 font-semibold text-gray-700 sticky left-0 bg-inherit w-28">{label}</td>
-                              <td className="px-4 py-3 text-right font-semibold text-gray-800">
-                                {payment ? `₹${Number(payment.amount).toLocaleString()}` : <span className="text-gray-300">—</span>}
-                              </td>
-                              <td className="px-4 py-3 text-center">{statusEl}</td>
-                              <td className="px-4 py-3 text-gray-500">
-                                {payment?.paidDate ? new Date(payment.paidDate).toLocaleDateString('en-IN') : <span className="text-gray-300">—</span>}
-                              </td>
-                              <td className="px-4 py-3 text-gray-400 max-w-[160px] truncate">
-                                {payment?.notes || <span className="text-gray-200">—</span>}
-                              </td>
-                            </tr>
+                        // Determine visual status for the card
+                        if (isPaid) {
+                          statusEl = (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 text-green-600 font-bold uppercase text-[10px]">
+                              <FiCheck size={9} /> Paid
+                            </span>
                           );
-                        })}
-                      </tbody>
-                    </table>
+                        } else if (isFuture) {
+                          statusEl = <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-400 font-bold uppercase text-[10px]">Upcoming</span>;
+                        } else if (isPast && cumulativeAmount === 0 && freq === 'monthly') {
+                          statusEl = (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 text-orange-500 font-bold uppercase text-[10px]">
+                              <FiAlertCircle size={9} /> Missed
+                            </span>
+                          );
+                        } else {
+                          statusEl = (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-500 font-bold uppercase text-[10px]">
+                              <FiClock size={9} /> Current
+                            </span>
+                          );
+                        }
+
+                        return (
+                          <div key={`${month}-${year}`} className="contents">
+                            <div 
+                              onClick={() => freq !== 'monthly' && toggleMonth(monthKey)}
+                              className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center gap-1.5 transition-colors ${freq !== 'monthly' ? 'cursor-pointer hover:border-gold hover:shadow-sm' : ''} ${isPaid ? 'border-green-200 bg-green-50/40' : (isPast && cumulativeAmount === 0 && freq === 'monthly') ? 'border-orange-200 bg-orange-50/40' : 'border-gray-200 bg-gray-50/40 hover:bg-white'}`}
+                            >
+                              <p className="font-bold text-gray-800 text-sm">{label}</p>
+                              {freq !== 'monthly' && <p className="text-[9px] text-gray-400 uppercase font-semibold">{progressLabel}</p>}
+                              <div className="my-0.5">{statusEl}</div>
+                              {cumulativeAmount > 0 || freq === 'monthly' ? (
+                                <>
+                                  <p className="text-xs font-bold text-gray-600 mt-1">₹{Number(cumulativeAmount).toLocaleString()}</p>
+                                  {freq === 'monthly' && paidDate && <p className="text-[9px] text-gray-400 uppercase">{new Date(paidDate).toLocaleDateString('en-IN')}</p>}
+                                  {freq === 'monthly' && notes && <p className="text-[10px] text-gray-500 truncate w-full mt-1 px-1" title={notes}>{notes}</p>}
+                                </>
+                              ) : (
+                                <p className="text-xs font-semibold text-gray-300 mt-1">—</p>
+                              )}
+                            </div>
+                            
+                            {/* Expanded Subgrid for Daily/Weekly */}
+                            {freq !== 'monthly' && expandedMonth[monthKey] && (
+                              <div className="col-span-2 sm:col-span-3 md:col-span-4 lg:col-span-6 xl:col-span-8 bg-gray-50 border border-gray-200 rounded-xl p-4 my-2 flex flex-wrap gap-2 shadow-inner">
+                                {subItems.length === 0 ? <p className="text-xs text-gray-400 w-full text-center">No active days/weeks in this month.</p> : null}
+                                {subItems.map((item, idx) => {
+                                  const p = item.payment;
+                                  return (
+                                    <div key={idx} className={`flex-1 min-w-[80px] flex flex-col items-center justify-center text-center p-2 rounded-lg border ${p?.status === 'paid' ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-white'}`}>
+                                      <p className="text-[10px] font-bold text-gray-800">{item.label}</p>
+                                      {p?.status === 'paid' ? (
+                                        <>
+                                          <p className="text-xs font-bold text-green-600 mt-0.5">₹{Number(p.amount).toLocaleString()}</p>
+                                          {p.paidDate && <p className="text-[8px] text-gray-400 mt-0.5">{new Date(p.paidDate).toLocaleDateString('en-IN')}</p>}
+                                        </>
+                                      ) : (
+                                        <p className="text-[10px] text-gray-400 mt-1">{item.isFuture ? 'Upcoming' : 'Unpaid'}</p>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
+                  )
                 )}
               </div>
             );

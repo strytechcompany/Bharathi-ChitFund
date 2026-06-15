@@ -59,7 +59,7 @@ const Notifications = () => {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
-                  {['Customer', 'Mobile', 'Amount Due', 'Team', 'Chit Scheme'].map(h => (
+                  {['Customer', 'Mobile', 'Amount Due', 'Period', 'Payment Mode', 'Team', 'Chit Scheme'].map(h => (
                     <th key={h} className="text-left px-5 py-3 text-xs font-bold text-gray-500 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -76,6 +76,21 @@ const Notifications = () => {
                     <td className="px-5 py-4 text-sm text-gray-600">{n.mobile}</td>
                     <td className="px-5 py-4">
                       <span className="font-semibold text-red-600">₹{n.amountDue.toLocaleString()}</span>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-medium text-gray-800">
+                      {(() => {
+                        const d = new Date();
+                        const mStr = d.toLocaleDateString('en-US', { month: 'short' });
+                        const y = d.getFullYear();
+                        const date = d.getDate();
+                        const week = Math.ceil(date / 7);
+                        if (n.paymentFrequency === 'daily') return `${date} ${mStr} ${y} (Day ${date})`;
+                        if (n.paymentFrequency === 'weekly') return `${mStr} ${y} (Wk ${week})`;
+                        return `${mStr} ${y}`;
+                      })()}
+                    </td>
+                    <td className="px-5 py-4">
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-purple-50 text-purple-600 rounded uppercase">{n.paymentFrequency || 'monthly'}</span>
                     </td>
                     <td className="px-5 py-4 text-sm text-gray-600">{n.teamName}</td>
                     <td className="px-5 py-4">

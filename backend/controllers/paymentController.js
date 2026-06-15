@@ -7,9 +7,9 @@ const getAll = async (req, res) => {
     if (req.query.member) filter.member = req.query.member;
     if (req.query.team) filter.team = req.query.team;
     const payments = await Payment.find(filter)
-      .populate('member', 'fullName mobile')
+      .populate('member', 'fullName mobile paymentFrequency')
       .populate('team', 'teamName')
-      .sort({ year: -1, month: -1 });
+      .sort({ createdAt: -1 });
     res.json({ success: true, data: payments });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -36,6 +36,16 @@ const update = async (req, res) => {
     const payment = await Payment.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!payment) return res.status(404).json({ success: false, message: 'Not found' });
     res.json({ success: true, data: payment });
+  } catch (err) {
+    res.status(400).json({ success: false, message: err.message });
+  }
+};
+
+const remove = async (req, res) => {
+  try {
+    const payment = await Payment.findByIdAndDelete(req.params.id);
+    if (!payment) return res.status(404).json({ success: false, message: 'Not found' });
+    res.json({ success: true, message: 'Payment deleted' });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
@@ -80,6 +90,7 @@ const getUnpaidNotifications = async (req, res) => {
           amountDue: amountDue || 0,
           teamName: member.team ? member.team.teamName : 'No Team',
           chitSchemeName: (member.team && member.team.chitScheme) ? member.team.chitScheme.name : 'No Scheme',
+          paymentFrequency: member.paymentFrequency || 'monthly',
         });
       }
     });
@@ -90,4 +101,4 @@ const getUnpaidNotifications = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, getUnpaidNotifications };
+module.exports = { getAll, create, update, remove, getUnpaidNotifications };

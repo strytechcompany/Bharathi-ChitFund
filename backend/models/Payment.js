@@ -6,6 +6,8 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   month: { type: Number, required: true },
   year: { type: Number, required: true },
+  week: { type: Number }, // Optional, 1-5
+  day: { type: Number }, // Optional, 1-31
   paidDate: { type: Date },
   transactionId: { type: String, default: '' },
   notes: { type: String, default: '' },

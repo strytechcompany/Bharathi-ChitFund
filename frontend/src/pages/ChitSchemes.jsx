@@ -39,7 +39,13 @@ const ChitSchemes = () => {
     try { await chitService.remove(id); toast.success('Deleted'); load(); } catch { toast.error('Delete failed'); }
   };
 
+  const handleComplete = async (id) => {
+    try { await chitService.update(id, { status: 'completed' }); toast.success('Scheme marked as completed'); load(); } catch { toast.error('Action failed'); }
+  };
+
   const TIER_COLOR = { BRONZE: 'bg-amber-100 text-amber-700', SILVER: 'bg-slate-100 text-slate-600', GOLD: 'bg-yellow-100 text-yellow-700', PLATINUM: 'bg-gold text-white' };
+
+  const activeSchemes = schemes.filter(s => s.status !== 'completed');
 
   return (
     <div>
@@ -54,14 +60,14 @@ const ChitSchemes = () => {
       </div>
 
       {loading ? <div className="text-center py-12 text-gray-400">Loading...</div> : (
-        schemes.length === 0 ? (
+        activeSchemes.length === 0 ? (
           <div className="bg-white rounded-xl border border-dashed border-gray-200 p-12 text-center">
-            <p className="text-gray-400 mb-3">No chit schemes yet.</p>
+            <p className="text-gray-400 mb-3">No active chit schemes yet.</p>
             <button onClick={openCreate} className="px-4 py-2 bg-gold text-white rounded-lg text-sm font-semibold">Create First Scheme</button>
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-5">
-            {schemes.map(s => (
+            {activeSchemes.map(s => (
               <div key={s._id} className="bg-white rounded-xl border border-gray-100 p-5 hover:shadow-md transition-all">
                 <div className="flex items-start justify-between mb-3">
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider ${TIER_COLOR[s.tier] || TIER_COLOR.BRONZE}`}>{s.tier} TIER</span>
@@ -77,7 +83,10 @@ const ChitSchemes = () => {
                   <div><span className="font-medium">Duration:</span> {s.durationMonths} months</div>
                 </div>
                 <div className="flex items-center justify-between pt-3 border-t border-gray-100">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${s.status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'}`}>{s.status}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${s.status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-500'}`}>{s.status}</span>
+                    <button onClick={() => handleComplete(s._id)} className="text-[10px] font-bold px-2 py-0.5 rounded uppercase bg-blue-50 text-blue-600 hover:bg-blue-100 transition">Mark Completed</button>
+                  </div>
                   <button onClick={() => navigate(`/chit-schemes/${s._id}/teams`)} className="flex items-center gap-1 text-gold text-xs font-semibold hover:underline">
                     View Teams <FiArrowRight size={12} />
                   </button>

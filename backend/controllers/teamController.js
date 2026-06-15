@@ -1,6 +1,8 @@
 const Team = require('../models/Team');
 const Member = require('../models/Member');
 
+const Payment = require('../models/Payment');
+
 const getAll = async (req, res) => {
   try {
     const filter = req.query.chitScheme ? { chitScheme: req.query.chitScheme } : {};
@@ -8,8 +10,19 @@ const getAll = async (req, res) => {
 
     const teamsWithCount = await Promise.all(
       teams.map(async (t) => {
-        const memberCount = await Member.countDocuments({ team: t._id, status: 'active' });
-        return { ...t.toObject(), currentMembers: memberCount };
+        const members = await Member.find({ team: t._id, status: 'active' });
+        const memberCount = members.length;
+        const totalExpected = members.reduce((sum, m) => sum + (m.chitAmount || 0), 0);
+        
+        const payments = await Payment.find({ team: t._id, status: 'paid' });
+        const totalCollected = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        
+        return { 
+          ...t.toObject(), 
+          currentMembers: memberCount,
+          totalExpected,
+          totalCollected 
+        };
       })
     );
 

@@ -1,5 +1,6 @@
 const Member = require('../models/Member');
 const Payment = require('../models/Payment');
+const Customer = require('../models/Customer');
 
 const getAll = async (req, res) => {
   try {
@@ -30,6 +31,21 @@ const getOne = async (req, res) => {
 const create = async (req, res) => {
   try {
     const member = await Member.create(req.body);
+    
+    if (req.body.mobile && req.body.fullName) {
+      await Customer.findOneAndUpdate(
+        { mobile: req.body.mobile },
+        { 
+          $set: { 
+            fullName: req.body.fullName, 
+            ...(req.body.address ? { address: req.body.address } : {}),
+            ...(req.body.notes ? { notes: req.body.notes } : {})
+          } 
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
+
     res.status(201).json({ success: true, data: member });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
@@ -40,6 +56,21 @@ const update = async (req, res) => {
   try {
     const member = await Member.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!member) return res.status(404).json({ success: false, message: 'Not found' });
+    
+    if (member.mobile && member.fullName) {
+      await Customer.findOneAndUpdate(
+        { mobile: member.mobile },
+        { 
+          $set: { 
+            fullName: member.fullName, 
+            ...(member.address ? { address: member.address } : {}),
+            ...(member.notes ? { notes: member.notes } : {})
+          } 
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
+
     res.json({ success: true, data: member });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });

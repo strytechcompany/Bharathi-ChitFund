@@ -6,9 +6,10 @@ import teamService from '../services/teamService';
 import memberService from '../services/memberService';
 import paymentService from '../services/paymentService';
 import customerService from '../services/customerService';
+import PaymentTracker from '../components/PaymentTracker';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', monthlyPadi: '', notes: '' };
+const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', monthlyPadi: '', paymentFrequency: 'monthly', notes: '' };
 
 const TeamDetails = () => {
   const { teamId } = useParams();
@@ -17,14 +18,13 @@ const TeamDetails = () => {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
+  const [expandedWeek, setExpandedWeek] = useState(null);
   const [memberPayments, setMemberPayments] = useState({});
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(MEMBER_EMPTY);
   const [saving, setSaving] = useState(false);
-  const [monthInputs, setMonthInputs] = useState({});
-  const [savingMonth, setSavingMonth] = useState({});
   const [totalCollection, setTotalCollection] = useState(0);
   const [customers, setCustomers] = useState([]);
   const [fetchingCustomer, setFetchingCustomer] = useState(false);
@@ -32,6 +32,15 @@ const TeamDetails = () => {
 
   const loadTotalCollection = async () => {
     const allPay = await paymentService.getAll({ team: teamId }).catch(() => []);
+    
+    const grouped = {};
+    allPay.forEach(p => {
+      const mid = typeof p.member === 'object' ? p.member._id : p.member;
+      if (!grouped[mid]) grouped[mid] = [];
+      grouped[mid].push(p);
+    });
+    setMemberPayments(grouped);
+
     setTotalCollection(allPay.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0));
   };
 
@@ -60,7 +69,53 @@ const TeamDetails = () => {
     return months;
   };
 
-  const toggleExpand = async (memberId) => {
+  const getCalendarWeeks = (t) => {
+    if (!t?.startDate) return [];
+    const start = new Date(t.startDate);
+    start.setHours(0,0,0,0);
+    const end = t.endDate ? new Date(t.endDate) : new Date(new Date(t.startDate).setMonth(start.getMonth() + (t.chitScheme?.durationMonths || 24)));
+    end.setHours(23,59,59,999);
+
+    let cur = new Date(start);
+    cur.setDate(cur.getDate() - cur.getDay()); // go back to Sunday
+
+    const weeks = [];
+    let weekIndex = 1;
+    let currentMonthKey = `${start.getFullYear()}-${start.getMonth() + 1}`;
+
+    while (cur <= end) {
+      const weekStart = new Date(cur);
+      const weekMonthKey = `${weekStart.getFullYear()}-${weekStart.getMonth() + 1}`;
+      
+      if (weekMonthKey !== currentMonthKey) {
+        weekIndex = 1;
+        currentMonthKey = weekMonthKey;
+      }
+
+      const days = [];
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart);
+        d.setDate(d.getDate() + i);
+        if (d >= start && d <= end) {
+          days.push(d);
+        }
+      }
+
+      if (days.length > 0) {
+        weeks.push({
+          monthKey: weekMonthKey,
+          weekNum: weekIndex++,
+          days: days,
+          label: `${days[0].getDate()} ${MONTHS[days[0].getMonth()]} - ${days[days.length-1].getDate()} ${MONTHS[days[days.length-1].getMonth()]}`
+        });
+      }
+
+      cur.setDate(cur.getDate() + 7);
+    }
+    return weeks;
+  };
+
+  const toggleExpand = async (memberId, frequency) => {
     if (expanded === memberId) { setExpanded(null); return; }
     setExpanded(memberId);
     let payments = memberPayments[memberId];
@@ -68,54 +123,17 @@ const TeamDetails = () => {
       payments = await paymentService.getAll({ member: memberId }).catch(() => []);
       setMemberPayments(prev => ({ ...prev, [memberId]: payments }));
     }
-    // Pre-fill month inputs from existing payments
-    const inputs = {};
-    payments.forEach(p => {
-      const key = `${memberId}_${p.month}_${p.year}`;
-      inputs[key] = { amount: p.amount || '', description: p.notes || '', id: p._id };
-    });
-    setMonthInputs(prev => ({ ...prev, ...inputs }));
-    // Notify missed past months
-    if (team) {
+    // Notify missed past months for monthly users only
+    if (team && frequency === 'monthly') {
       const now = new Date();
       const missed = getTeamMonths(team).filter(({ month, year }) => {
         const monthEnd = new Date(year, month - 1, 28);
         return monthEnd < now && !payments.find(p => p.month === month && p.year === year && p.status === 'paid');
       });
       if (missed.length > 0) {
-        toast.warning(`${missed.length} missed payment${missed.length > 1 ? 's' : ''} for this member`, {
-          position: 'top-right', autoClose: 4000,
-        });
+        toast.warning(`${missed.length} missed payment${missed.length > 1 ? 's' : ''} for this member`, { position: 'top-right', autoClose: 6000 });
       }
     }
-  };
-
-  const setMonthInput = (key, field, value) => {
-    setMonthInputs(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: value } }));
-  };
-
-  const saveMonthPayment = async (memberId, month, year) => {
-    const key = `${memberId}_${month}_${year}`;
-    const input = monthInputs[key] || {};
-    if (!input.amount) return toast.error('Enter an amount to save');
-    setSavingMonth(prev => ({ ...prev, [key]: true }));
-    try {
-      if (input.id) {
-        await paymentService.update(input.id, { amount: Number(input.amount), notes: input.description || '', status: 'paid' });
-      } else {
-        const created = await paymentService.create({
-          member: memberId, team: teamId, month, year,
-          amount: Number(input.amount), notes: input.description || '',
-          status: 'paid', paidDate: new Date(),
-        });
-        setMonthInputs(prev => ({ ...prev, [key]: { ...prev[key], id: created._id } }));
-      }
-      const payments = await paymentService.getAll({ member: memberId });
-      setMemberPayments(prev => ({ ...prev, [memberId]: payments }));
-      loadTotalCollection();
-      toast.success(`Payment saved for ${MONTHS[month - 1]} ${year}`, { position: 'top-right', autoClose: 2000 });
-    } catch { toast.error('Failed to save payment'); }
-    finally { setSavingMonth(prev => ({ ...prev, [key]: false })); }
   };
 
   const openCreate = async () => {
@@ -130,7 +148,7 @@ const TeamDetails = () => {
   };
   const openEdit = (m) => {
     setEditing(m._id);
-    setForm({ fullName: m.fullName, mobile: m.mobile, address: m.address || '', monthlyPadi: m.monthlyPadi, notes: m.notes || '' });
+    setForm({ fullName: m.fullName, mobile: m.mobile, address: m.address || '', monthlyPadi: m.monthlyPadi, paymentFrequency: m.paymentFrequency || 'monthly', notes: m.notes || '' });
     setModal(true);
   };
 
@@ -167,6 +185,16 @@ const TeamDetails = () => {
     finally { setSaving(false); }
   };
 
+  const handleCompleteTeam = async () => {
+    try { 
+      await teamService.update(team._id, { status: 'completed' }); 
+      toast.success('Team marked as completed');
+      navigate(`/chit-schemes/${team.chitScheme?._id}/teams`); 
+    } catch { 
+      toast.error('Failed to mark as completed'); 
+    }
+  };
+
   const handleDelete = async (id) => {
     if (!confirm('Delete this member?')) return;
     try { await memberService.remove(id); toast.success('Deleted'); load(); } catch { toast.error('Delete failed'); }
@@ -183,7 +211,8 @@ const TeamDetails = () => {
   if (loading) return <div className="text-center py-12 text-gray-400">Loading...</div>;
   if (!team) return <div className="text-center py-12 text-red-400">Team not found</div>;
 
-  const teamMonths = getTeamMonths(team);
+  const teamMonths = team ? getTeamMonths(team) : [];
+  const calendarWeeks = team ? getCalendarWeeks(team) : [];
 
   return (
     <div>
@@ -195,11 +224,18 @@ const TeamDetails = () => {
         <span>/</span>
         <span className="text-gray-600">{team.teamName} Details</span>
       </div>
-      <h2 className="text-2xl font-bold text-gray-800 mb-6">{team.teamName} Details</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-gray-800">{team.teamName} Details</h2>
+        {team.status !== 'completed' && (
+          <button onClick={handleCompleteTeam} className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-semibold hover:bg-blue-100 transition">
+            Mark Team as Completed
+          </button>
+        )}
+      </div>
 
       {/* Top Info Bar */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="col-span-3 bg-white rounded-xl border border-gray-100 p-5 grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="col-span-2 bg-white rounded-xl border border-gray-100 p-5 grid grid-cols-2 gap-4">
           <div>
             <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Current Active Scheme</p>
             <p className="text-xl font-bold text-gray-800">
@@ -216,13 +252,6 @@ const TeamDetails = () => {
           <div className="text-center">
             <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Total Members</p>
             <p className="text-4xl font-bold text-gray-800">{members.length}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-gray-400 uppercase font-semibold mb-1">Months Completed</p>
-            <p className="text-4xl font-bold text-gray-800">
-              {String(monthsCompleted).padStart(2, '0')}
-              <span className="text-lg text-gray-400">/{team.chitScheme?.durationMonths || 24}</span>
-            </p>
           </div>
         </div>
         <div className="bg-[#5C4A00] text-white rounded-xl p-5 flex flex-col justify-center">
@@ -257,13 +286,41 @@ const TeamDetails = () => {
             const isExp = expanded === m._id;
             const payments = memberPayments[m._id] || [];
             const totalPaid = payments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+            
+            const paidCount = payments.filter(p => p.status === 'paid').length;
+            let fullyPaidMonths = paidCount;
+            let fullyPaidDays = 0;
+            let fullyPaidWeeks = 0;
+
+            if (m.paymentFrequency === 'daily') {
+              fullyPaidDays = paidCount;
+              fullyPaidWeeks = Math.floor(paidCount / 7);
+              const monthsPaidMap = {};
+              payments.filter(p => p.status === 'paid').forEach(p => {
+                const k = `${p.year}-${p.month}`;
+                monthsPaidMap[k] = (monthsPaidMap[k] || 0) + 1;
+              });
+              fullyPaidMonths = Object.keys(monthsPaidMap).filter(k => {
+                const [year, month] = k.split('-');
+                const daysInMonth = new Date(year, month, 0).getDate();
+                return monthsPaidMap[k] >= daysInMonth;
+              }).length;
+            } else if (m.paymentFrequency === 'weekly') {
+              fullyPaidWeeks = paidCount;
+              fullyPaidDays = fullyPaidWeeks * 7;
+              fullyPaidMonths = Math.floor(paidCount / 4); // rough approximation
+            } else {
+              fullyPaidMonths = paidCount;
+              fullyPaidWeeks = fullyPaidMonths * 4;
+              fullyPaidDays = fullyPaidMonths * 30;
+            }
 
             return (
               <div key={m._id} className="border-b border-gray-100 last:border-0">
                 {/* Member row — name + total paid */}
                 <div
                   className="px-5 py-4 flex items-center justify-between cursor-pointer hover:bg-gray-50"
-                  onClick={() => toggleExpand(m._id)}
+                  onClick={() => toggleExpand(m._id, m.paymentFrequency || 'monthly')}
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-gold/20 flex items-center justify-center text-gold text-xs font-bold flex-shrink-0">
@@ -296,18 +353,23 @@ const TeamDetails = () => {
                       {/* Left: Personal Details */}
                       <div>
                         <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Personal Details</p>
-                        <div className="space-y-2 text-sm">
-                          <div><p className="text-xs text-gray-400">Full Legal Name</p><p className="font-medium text-gray-800">{m.fullName}</p></div>
-                          <div><p className="text-xs text-gray-400">Mobile Number</p><p className="font-medium text-gray-800">{m.mobile}</p></div>
-                          {m.address && <div><p className="text-xs text-gray-400">Address</p><p className="font-medium text-gray-800">{m.address}</p></div>}
-                          {m.aadhaarNumber && <div><p className="text-xs text-gray-400">Aadhaar</p><p className="font-medium text-gray-800">XXXX XXXX {m.aadhaarNumber.slice(-4)}</p></div>}
-                          {m.joiningDate && <div><p className="text-xs text-gray-400">Join Date</p><p className="font-medium text-gray-800">{new Date(m.joiningDate).toLocaleDateString('en-IN')}</p></div>}
+                        <div className="grid grid-cols-2 gap-y-3 gap-x-4 text-sm">
+                          <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Full Legal Name</p><p className="font-medium text-gray-800">{m.fullName}</p></div>
+                          <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Mobile Number</p><p className="font-medium text-gray-800">{m.mobile}</p></div>
+                          
+                          {m.address && <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Address</p><p className="font-medium text-gray-800">{m.address}</p></div>}
+                          <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Mode of Pay</p><p className="font-medium text-gray-800 capitalize">{m.paymentFrequency || 'monthly'}</p></div>
+
+                          {m.aadhaarNumber && <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Aadhaar</p><p className="font-medium text-gray-800">XXXX XXXX {m.aadhaarNumber.slice(-4)}</p></div>}
+                          {m.joiningDate && <div className="col-span-2 sm:col-span-1"><p className="text-xs text-gray-400">Join Date</p><p className="font-medium text-gray-800">{new Date(m.joiningDate).toLocaleDateString('en-IN')}</p></div>}
                         </div>
                         <div className="grid grid-cols-2 gap-3 mt-4 p-3 bg-white rounded-lg border border-gray-100">
                           <div><p className="text-xs text-gray-400">Chit Amount</p><p className="font-bold text-gray-800">₹{Number(m.chitAmount).toLocaleString()}</p></div>
-                          <div><p className="text-xs text-gray-400">Monthly Pay</p><p className="font-bold text-gray-800">₹{Number(m.monthlyPadi).toLocaleString()}</p></div>
+                          <div><p className="text-xs text-gray-400">{m.paymentFrequency === 'daily' ? 'Daily' : m.paymentFrequency === 'weekly' ? 'Weekly' : 'Monthly'} Pay</p><p className="font-bold text-gray-800">₹{Number(m.monthlyPadi).toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">Total Paid</p><p className="font-bold text-gray-800">₹{totalPaid.toLocaleString()}</p></div>
-                          <div><p className="text-xs text-gray-400">Months Paid</p><p className="font-bold text-gray-800">{payments.filter(p => p.status === 'paid').length} / {m.totalMonths}</p></div>
+                          <div><p className="text-xs text-gray-400">Days Completed</p><p className="font-bold text-gray-800">{fullyPaidDays}</p></div>
+                          <div><p className="text-xs text-gray-400">Weeks Completed</p><p className="font-bold text-gray-800">{fullyPaidWeeks}</p></div>
+                          <div><p className="text-xs text-gray-400">Months Completed</p><p className="font-bold text-gray-800">{fullyPaidMonths} / {m.totalMonths}</p></div>
                         </div>
                         <div className="flex gap-2 mt-3">
                           <button
@@ -326,64 +388,15 @@ const TeamDetails = () => {
                       </div>
 
                       {/* Right: Monthly Payment Grid */}
-                      <div>
-                        <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Monthly Payments</p>
-                        <div className="space-y-2 max-h-[440px] overflow-y-auto pr-1">
-                          {teamMonths.length === 0 && (
-                            <p className="text-xs text-gray-400 py-4 text-center">No months available — set a start date for this team.</p>
-                          )}
-                          {teamMonths.map(({ month, year, label }) => {
-                            const key = `${m._id}_${month}_${year}`;
-                            const input = monthInputs[key] || {};
-                            const isPaid = !!input.id;
-                            const isSaving = !!savingMonth[key];
-                            const isPast = new Date(year, month - 1, 28) < now;
-
-                            return (
-                              <div
-                                key={key}
-                                className={`rounded-lg border p-3 bg-white ${isPaid ? 'border-green-200' : isPast ? 'border-orange-200' : 'border-gray-100'}`}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className="w-20 flex-shrink-0">
-                                    <p className="text-xs font-bold text-gray-700">{label}</p>
-                                    {isPaid && (
-                                      <span className="text-[10px] text-green-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                                        <FiCheck size={9} /> Paid
-                                      </span>
-                                    )}
-                                    {!isPaid && isPast && (
-                                      <span className="text-[10px] text-orange-500 font-semibold flex items-center gap-0.5 mt-0.5">
-                                        <FiAlertCircle size={9} /> Missed
-                                      </span>
-                                    )}
-                                  </div>
-                                  <input
-                                    type="number"
-                                    value={input.amount || ''}
-                                    onChange={e => setMonthInput(key, 'amount', e.target.value)}
-                                    placeholder="₹ Amount"
-                                    className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs outline-none focus:border-gold"
-                                  />
-                                  <button
-                                    onClick={() => saveMonthPayment(m._id, month, year)}
-                                    disabled={isSaving}
-                                    className="px-3 py-1.5 bg-gold text-white text-xs font-semibold rounded hover:bg-gold-hover disabled:opacity-50 flex-shrink-0"
-                                  >
-                                    {isSaving ? '...' : 'Save'}
-                                  </button>
-                                </div>
-                                <textarea
-                                  value={input.description || ''}
-                                  onChange={e => setMonthInput(key, 'description', e.target.value)}
-                                  placeholder="Description (optional)"
-                                  rows={1}
-                                  className="mt-2 w-full border border-gray-100 rounded px-2 py-1 text-xs outline-none focus:border-gold resize-none text-gray-500 placeholder-gray-300"
-                                />
-                              </div>
-                            );
-                          })}
-                        </div>
+                      <div className="md:col-span-1 lg:col-span-1">
+                        <PaymentTracker 
+                          member={m}
+                          team={team}
+                          calendarWeeks={calendarWeeks}
+                          teamMonths={teamMonths}
+                          memberPayments={memberPayments[m._id] || []}
+                          onPaymentChange={loadTotalCollection}
+                        />
                       </div>
 
                     </div>
@@ -460,6 +473,11 @@ const TeamDetails = () => {
                 <input value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} placeholder="Member name (auto-filled after fetch)" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Address</label>
+                <input value={form.address} onChange={e => setForm({...form, address: e.target.value})} placeholder="Member Address" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
+              </div>
+
               {/* Scheme info (readonly) */}
               {team.chitScheme && (
                 <div className="grid grid-cols-2 gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
@@ -475,8 +493,19 @@ const TeamDetails = () => {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Monthly Padi (₹) *</label>
-                <input type="number" value={form.monthlyPadi} onChange={e => setForm({...form, monthlyPadi: e.target.value})} placeholder="Enter monthly amount" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">Payment Frequency *</label>
+                <select value={form.paymentFrequency || 'monthly'} onChange={e => setForm({...form, paymentFrequency: e.target.value})} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1 uppercase">
+                  {form.paymentFrequency === 'daily' ? 'Daily' : form.paymentFrequency === 'weekly' ? 'Weekly' : 'Monthly'} Padi (₹) *
+                </label>
+                <input type="number" value={form.monthlyPadi} onChange={e => setForm({...form, monthlyPadi: e.target.value})} placeholder={`Enter ${form.paymentFrequency || 'monthly'} amount`} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:border-gold" />
               </div>
 
               <div>

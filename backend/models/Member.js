@@ -8,6 +8,7 @@ const memberSchema = new mongoose.Schema({
   joiningDate: { type: Date },
   chitAmount: { type: Number, default: 0 },
   monthlyPadi: { type: Number, default: 0 },
+  paymentFrequency: { type: String, enum: ['daily', 'weekly', 'monthly'], default: 'monthly' },
   totalMonths: { type: Number, default: 20 },
   notes: { type: String, default: '' },
   team: { type: mongoose.Schema.Types.ObjectId, ref: 'Team' },

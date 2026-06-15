@@ -14,8 +14,8 @@ import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import Payments from './pages/Payments';
 import Reports from './pages/Reports';
-
 import Notifications from './pages/Notifications';
+import Completed from './pages/Completed';
 
 const App = () => (
   <AuthProvider>
@@ -37,6 +37,8 @@ const App = () => (
             <Route path="/teams/:teamId" element={<TeamDetails />} />
             <Route path="/customers" element={<Customers />} />
             <Route path="/customers/:id" element={<CustomerDetail />} />
+            <Route path="/teams/:id" element={<TeamDetails />} />
+            <Route path="/completed" element={<Completed />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/notifications" element={<Notifications />} />
