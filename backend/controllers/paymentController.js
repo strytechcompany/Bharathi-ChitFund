@@ -56,6 +56,8 @@ const getUnpaidNotifications = async (req, res) => {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
+    const currentDay = currentDate.getDate();
+    const currentWeek = Math.ceil(currentDay / 7);
 
     const activeMembers = await Member.find({ status: 'active' })
       .populate({
@@ -66,18 +68,41 @@ const getUnpaidNotifications = async (req, res) => {
         }
       });
 
+    // Only consider members in active teams that have already started
+    const validMembers = activeMembers.filter(m => 
+      m.team && 
+      m.team.status === 'active' && 
+      m.team.startDate && 
+      new Date(m.team.startDate) <= currentDate
+    );
+
     const paidPayments = await Payment.find({
       month: currentMonth,
       year: currentYear,
-      status: 'paid'
+      status: 'paid',
+      member: { $in: validMembers.map(m => m._id) }
     });
-
-    const paidMemberIds = new Set(paidPayments.map(p => p.member.toString()));
 
     const unpaidNotifications = [];
 
-    activeMembers.forEach(member => {
-      if (!paidMemberIds.has(member._id.toString())) {
+    validMembers.forEach(member => {
+      const memberPayments = paidPayments.filter(p => p.member.toString() === member._id.toString());
+      
+      let isUnpaid = false;
+      let missingPeriod = '';
+
+      if (member.paymentFrequency === 'daily') {
+        const hasPaidToday = memberPayments.some(p => p.day === currentDay || (p.paidDate && new Date(p.paidDate).getDate() === currentDay));
+        if (!hasPaidToday) { isUnpaid = true; missingPeriod = `Today (Day ${currentDay})`; }
+      } else if (member.paymentFrequency === 'weekly') {
+        const hasPaidThisWeek = memberPayments.some(p => p.week === currentWeek || (p.paidDate && Math.ceil(new Date(p.paidDate).getDate() / 7) === currentWeek));
+        if (!hasPaidThisWeek) { isUnpaid = true; missingPeriod = `This Week (Wk ${currentWeek})`; }
+      } else {
+        const hasPaidThisMonth = memberPayments.some(p => p.month === currentMonth && p.year === currentYear);
+        if (!hasPaidThisMonth) { isUnpaid = true; missingPeriod = `This Month`; }
+      }
+
+      if (isUnpaid) {
         let amountDue = member.monthlyPadi;
         if (!amountDue && member.team && member.team.chitScheme) {
           amountDue = member.team.chitScheme.monthlyAmount;
@@ -88,9 +113,10 @@ const getUnpaidNotifications = async (req, res) => {
           fullName: member.fullName,
           mobile: member.mobile,
           amountDue: amountDue || 0,
-          teamName: member.team ? member.team.teamName : 'No Team',
-          chitSchemeName: (member.team && member.team.chitScheme) ? member.team.chitScheme.name : 'No Scheme',
+          teamName: member.team.teamName,
+          chitSchemeName: member.team.chitScheme.name,
           paymentFrequency: member.paymentFrequency || 'monthly',
+          missingPeriod: missingPeriod
         });
       }
     });

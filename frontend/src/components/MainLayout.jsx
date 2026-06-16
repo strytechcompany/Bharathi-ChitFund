@@ -1,13 +1,22 @@
-import { useContext, useState } from 'react';
+import { useContext, useState, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { FiBell, FiHelpCircle, FiLogOut, FiSearch, FiMenu } from 'react-icons/fi';
 import Sidebar from './Sidebar';
 import { AuthContext } from '../context/AuthContext';
+import { checkCompletedTeams } from '../services/completionService';
 
 const MainLayout = () => {
   const { user, logout } = useContext(AuthContext);
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    // Run immediately
+    checkCompletedTeams();
+    // Then every 30 mins (30 * 60 * 1000 = 1800000 ms)
+    const interval = setInterval(checkCompletedTeams, 1800000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 

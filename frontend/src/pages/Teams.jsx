@@ -4,6 +4,9 @@ import { toast } from 'react-toastify';
 import { FiPlus, FiEdit2, FiTrash2, FiUsers, FiArrowRight, FiDownload } from 'react-icons/fi';
 import teamService from '../services/teamService';
 import chitService from '../services/chitService';
+import memberService from '../services/memberService';
+import paymentService from '../services/paymentService';
+import { syncTeamToLocal, downloadTeamReport } from '../services/dataSyncService';
 
 const STATUSES = ['active', 'inactive', 'completed'];
 const EMPTY = { teamName: '', chitScheme: '', startDate: '', endDate: '', status: 'active', memberLimit: 30 };
@@ -69,8 +72,33 @@ const Teams = () => {
     if (!form.teamName || !form.chitScheme || !form.startDate) return toast.error('Fill all required fields');
     setSaving(true);
     try {
-      if (editing) { await teamService.update(editing, form); toast.success('Updated'); }
-      else { await teamService.create(form); toast.success('Created'); }
+      if (editing) { 
+        await teamService.update(editing, form); 
+        toast.success('Updated'); 
+        
+        if (form.status === 'completed') {
+          // If status is updated to completed, automatically fetch and sync/download
+          const team = teams.find(t => t._id === editing) || { _id: editing };
+          const fullTeam = { ...team, ...form, chitScheme: schemes.find(s => s._id === form.chitScheme) || team.chitScheme };
+          
+          const members = await memberService.getAll(editing).catch(() => []);
+          const payments = await paymentService.getAll({ team: editing }).catch(() => []);
+          
+          const memberPayments = {};
+          payments.forEach(p => {
+            const mid = typeof p.member === 'object' ? p.member._id : p.member;
+            if (!memberPayments[mid]) memberPayments[mid] = [];
+            memberPayments[mid].push(p);
+          });
+
+          const teamData = { team: fullTeam, members, memberPayments };
+          syncTeamToLocal(teamData);
+          downloadTeamReport(teamData);
+        }
+      } else { 
+        await teamService.create(form); 
+        toast.success('Created'); 
+      }
       setModal(false); load();
     } catch (err) { toast.error(err.response?.data?.message || 'Save failed'); }
     finally { setSaving(false); }

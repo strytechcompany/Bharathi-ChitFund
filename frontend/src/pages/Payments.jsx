@@ -84,6 +84,7 @@ const Payments = () => {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('standard'); // 'standard' or 'search'
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
 
   // Standard Entry Dropdown state
   const [schemes, setSchemes] = useState([]);
@@ -248,7 +249,13 @@ const Payments = () => {
     setMemberPayments(p);
   };
 
-  const filtered = payments.filter(p => {
+  const paymentsByDate = payments.filter(p => {
+    const d = p.paidDate || p.createdAt || p.updatedAt;
+    if (!d) return false;
+    return new Date(d).toISOString().split('T')[0] === selectedDate;
+  });
+
+  const filtered = paymentsByDate.filter(p => {
     const name = p.member?.fullName || '';
     const mobile = p.member?.mobile || '';
     return name.toLowerCase().includes(search.toLowerCase()) || mobile.includes(search);
@@ -259,8 +266,10 @@ const Payments = () => {
     c.mobile.includes(customerSearch)
   );
 
-  const totalPaid = payments.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
-  const totalDue = payments.filter(p => p.status === 'due').reduce((s, p) => s + (p.amount || 0), 0);
+  const totalPaid = paymentsByDate.filter(p => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+  const totalDue = paymentsByDate.filter(p => p.status === 'due').reduce((s, p) => s + (p.amount || 0), 0);
+  
+  const isToday = selectedDate === new Date().toISOString().split('T')[0];
 
   return (
     <div>
@@ -277,11 +286,11 @@ const Payments = () => {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-100 p-5">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Total Transactions</p>
-          <p className="text-3xl font-bold text-gray-800">{payments.length}</p>
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{isToday ? 'Today Total Transactions' : 'Total Transactions'}</p>
+          <p className="text-3xl font-bold text-gray-800">{paymentsByDate.length}</p>
         </div>
         <div className="bg-white rounded-xl border border-green-100 p-5">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Total Collected</p>
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{isToday ? 'Today Total Amount' : 'Total Amount'}</p>
           <p className="text-3xl font-bold text-green-600">₹{totalPaid.toLocaleString()}</p>
         </div>
         <div className="bg-white rounded-xl border border-red-100 p-5">
@@ -290,10 +299,21 @@ const Payments = () => {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative mb-5 max-w-sm">
-        <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by member name..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-gold" />
+      {/* Search & Filter */}
+      <div className="flex items-center gap-4 mb-5">
+        <div className="relative max-w-sm flex-1">
+          <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by member name..." className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:border-gold" />
+        </div>
+        <div className="relative">
+          <input 
+            type="date" 
+            value={selectedDate} 
+            onChange={e => setSelectedDate(e.target.value)} 
+            className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 outline-none focus:border-gold"
+            title="Filter by transaction date"
+          />
+        </div>
       </div>
 
       {loading ? <div className="text-center py-12 text-gray-400">Loading...</div> : (

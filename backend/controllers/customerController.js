@@ -21,6 +21,19 @@ const getOne = async (req, res) => {
 
 const create = async (req, res) => {
   try {
+    const { fullName, mobile } = req.body;
+    if (fullName || mobile) {
+      const orConditions = [];
+      if (fullName) orConditions.push({ fullName });
+      if (mobile) orConditions.push({ mobile });
+      
+      const existing = await Customer.findOne({ $or: orConditions });
+      if (existing) {
+        if (existing.fullName === fullName) return res.status(400).json({ success: false, message: 'user name already exist' });
+        if (existing.mobile === mobile) return res.status(400).json({ success: false, message: 'mobile no already exist' });
+      }
+    }
+
     const customer = await Customer.create(req.body);
     res.status(201).json({ success: true, data: customer });
   } catch (err) {
@@ -30,6 +43,23 @@ const create = async (req, res) => {
 
 const update = async (req, res) => {
   try {
+    const { fullName, mobile } = req.body;
+    if (fullName || mobile) {
+      const orConditions = [];
+      if (fullName) orConditions.push({ fullName });
+      if (mobile) orConditions.push({ mobile });
+
+      const existing = await Customer.findOne({ 
+        $or: orConditions,
+        _id: { $ne: req.params.id }
+      });
+      
+      if (existing) {
+        if (existing.fullName === fullName) return res.status(400).json({ success: false, message: 'user name already exist' });
+        if (existing.mobile === mobile) return res.status(400).json({ success: false, message: 'mobile no already exist' });
+      }
+    }
+
     const customer = await Customer.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
     if (!customer) return res.status(404).json({ success: false, message: 'Not found' });
     res.json({ success: true, data: customer });

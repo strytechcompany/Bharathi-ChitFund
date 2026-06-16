@@ -7,6 +7,7 @@ import memberService from '../services/memberService';
 import paymentService from '../services/paymentService';
 import customerService from '../services/customerService';
 import PaymentTracker from '../components/PaymentTracker';
+import { syncTeamToLocal, downloadTeamReport } from '../services/dataSyncService';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', monthlyPadi: '', paymentFrequency: 'monthly', notes: '' };
@@ -189,6 +190,12 @@ const TeamDetails = () => {
     try { 
       await teamService.update(team._id, { status: 'completed' }); 
       toast.success('Team marked as completed');
+      
+      // Sync and download specific team report
+      const teamData = { team, members, memberPayments };
+      syncTeamToLocal(teamData);
+      downloadTeamReport(teamData);
+      
       navigate(`/chit-schemes/${team.chitScheme?._id}/teams`); 
     } catch { 
       toast.error('Failed to mark as completed'); 

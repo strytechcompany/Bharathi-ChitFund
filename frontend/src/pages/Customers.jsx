@@ -34,12 +34,11 @@ const Customers = () => {
       if (editing) { await customerService.update(editing, form); toast.success('Customer updated'); }
       else { await customerService.create(form); toast.success('Customer created'); }
       setModal(false); load();
-    } catch { toast.error('Save failed'); }
+    } catch (err) { toast.error(err.response?.data?.message || 'Save failed'); }
     finally { setSaving(false); }
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Delete this customer?')) return;
     try { await customerService.remove(id); toast.success('Deleted'); load(); } catch { toast.error('Delete failed'); }
   };
 
