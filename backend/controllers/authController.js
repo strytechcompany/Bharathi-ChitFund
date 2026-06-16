@@ -132,9 +132,35 @@ const getMe = async (req, res) => {
   }
 };
 
+// @desc    Change Password
+// @route   PUT /api/auth/change-password
+// @access  Private
+const changePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    // Find admin
+    const admin = await Admin.findById(req.admin._id);
+    if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
+
+    // Check current password
+    const isMatch = await admin.matchPassword(currentPassword);
+    if (!isMatch) return res.status(400).json({ success: false, message: 'Incorrect current password' });
+
+    // Set new password (the model pre-save hook will hash it)
+    admin.password = newPassword;
+    await admin.save();
+
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   createAdmin,
   login,
   verifyOTP,
   getMe,
+  changePassword,
 };
