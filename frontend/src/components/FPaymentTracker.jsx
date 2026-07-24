@@ -1,22 +1,22 @@
 import { useContext, useState } from 'react';
-import paymentService from '../services/paymentService';
+import fpaymentService from '../services/fpaymentService';
 import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
 
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
-const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChange, memberPayments }) => {
+const FPaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChange, memberPayments }) => {
   const { user } = useContext(AuthContext);
   const [saving, setSaving] = useState({});
   const [editing, setEditing] = useState({});
   const [inputs, setInputs] = useState({});
   const [expandedWeek, setExpandedWeek] = useState(null);
 
-  const getInput = (key, payment) => inputs[key] || { amount: payment?.amount ?? member.monthlyPadi ?? '', description: payment?.notes || '' };
+  const getInput = (key, payment) => inputs[key] || { amount: payment?.amount ?? member.monthlyAmount ?? '', description: payment?.description || '' };
   const setField = (key, field, value) => setInputs(prev => ({ ...prev, [key]: { ...getInput(key), [field]: value } }));
 
   const startEdit = (key, payment) => {
-    setInputs(prev => ({ ...prev, [key]: { amount: payment.amount, description: payment.notes || '' } }));
+    setInputs(prev => ({ ...prev, [key]: { amount: payment.amount, description: payment.description || '' } }));
     setEditing(prev => ({ ...prev, [key]: true }));
   };
   const cancelEdit = (key) => setEditing(prev => ({ ...prev, [key]: false }));
@@ -27,16 +27,20 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
     if (!amount || amount <= 0) return toast.error('Enter a valid amount');
     setSaving(prev => ({ ...prev, [key]: true }));
     try {
-      await paymentService.create({
-        member: member._id,
-        team: team._id,
+      await fpaymentService.createFPayment({
+        memberId: member._id,
+        memberName: member.fullName,
+        teamId: team._id,
+        teamName: team.teamName,
+        schemeId: team.schemeId?._id,
+        schemeName: team.schemeName,
         month: period.month,
         year: period.year,
         week: period.week || undefined,
         day: period.day || undefined,
         amount,
-        notes: input.description || '',
-        status: 'paid',
+        description: input.description || '',
+        status: 'completed',
         paymentDate: period.paymentDate,
         createdBy: user?.name || user?.username || '',
       });
@@ -55,7 +59,7 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
     if (!amount || amount <= 0) return toast.error('Enter a valid amount');
     setSaving(prev => ({ ...prev, [key]: true }));
     try {
-      await paymentService.update(payment._id, { amount, notes: input.description || '' });
+      await fpaymentService.updateFPayment(payment._id, { amount, description: input.description || '' });
       toast.success('Payment updated');
       setEditing(prev => ({ ...prev, [key]: false }));
       if (onPaymentChange) onPaymentChange();
@@ -111,7 +115,7 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
           <div className="flex items-center justify-between gap-2 p-1.5 rounded bg-green-50 border border-green-200">
             <div className="min-w-0">
               <p className="text-xs font-bold text-green-700">₹{Number(payment.amount).toLocaleString()}</p>
-              {payment.notes && <p className="text-[10px] text-gray-500 truncate">{payment.notes}</p>}
+              {payment.description && <p className="text-[10px] text-gray-500 truncate">{payment.description}</p>}
             </div>
             <button onClick={() => startEdit(key, payment)} className="text-[10px] font-bold text-gold hover:text-gold-hover whitespace-nowrap">
               Edit
@@ -123,12 +127,12 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
   };
 
   const history = [...(memberPayments || [])]
-    .filter(p => p.status === 'paid')
-    .sort((a, b) => new Date(b.paymentDate || b.paidDate || b.createdAt) - new Date(a.paymentDate || a.paidDate || a.createdAt));
+    .filter(p => p.status === 'completed')
+    .sort((a, b) => new Date(b.paymentDate || b.createdAt) - new Date(a.paymentDate || a.createdAt));
 
   return (
     <div>
-      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Payments Tracker ({member.paymentFrequency || 'monthly'})</p>
+      <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">FPayment Tracker ({member.paymentFrequency || 'monthly'})</p>
       <div className="space-y-2 max-h-[440px] overflow-y-auto pr-1">
         {teamMonths.length === 0 && (
           <p className="text-xs text-gray-400 py-4 text-center">No months available — set a start date for this team.</p>
@@ -175,7 +179,7 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
                          const dDay = dateObj.getDate();
                          const dayName = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
 
-                         const payment = memberPayments.find(p => p.month === dMonth && p.year === dYear && p.week === w.weekNum && p.day === dDay && p.status === 'paid');
+                         const payment = memberPayments.find(p => p.month === dMonth && p.year === dYear && p.week === w.weekNum && p.day === dDay && p.status === 'completed');
                          const key = `${member._id}_${dMonth}_${dYear}_${w.weekNum}_${dDay}`;
 
                          return (
@@ -232,7 +236,7 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
                     const dMonth = w.days[0].getMonth() + 1;
                     const dYear = w.days[0].getFullYear();
 
-                    const payment = memberPayments.find(p => p.month === dMonth && p.year === dYear && p.week === w.weekNum && p.status === 'paid');
+                    const payment = memberPayments.find(p => p.month === dMonth && p.year === dYear && p.week === w.weekNum && p.status === 'completed');
                     const key = `${member._id}_${dMonth}_${dYear}_${w.weekNum}`;
 
                     return (
@@ -253,7 +257,7 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
           }
 
           // Monthly
-          const payment = memberPayments.find(p => p.month === month && p.year === year && p.status === 'paid');
+          const payment = memberPayments.find(p => p.month === month && p.year === year && p.status === 'completed');
           const key = `${member._id}_${month}_${year}`;
 
           return (
@@ -287,9 +291,9 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
               <tbody>
                 {history.map(p => (
                   <tr key={p._id} className="border-t border-gray-50">
-                    <td className="px-3 py-1.5 text-gray-600">{formatDate(p.paymentDate || p.paidDate || p.createdAt)}</td>
+                    <td className="px-3 py-1.5 text-gray-600">{formatDate(p.paymentDate || p.createdAt)}</td>
                     <td className="px-3 py-1.5 font-semibold text-gray-800">₹{Number(p.amount).toLocaleString()}</td>
-                    <td className="px-3 py-1.5 text-gray-500 truncate max-w-[120px]">{p.notes || '—'}</td>
+                    <td className="px-3 py-1.5 text-gray-500 truncate max-w-[120px]">{p.description || '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -301,4 +305,4 @@ const PaymentTracker = ({ member, team, calendarWeeks, teamMonths, onPaymentChan
   );
 };
 
-export default PaymentTracker;
+export default FPaymentTracker;

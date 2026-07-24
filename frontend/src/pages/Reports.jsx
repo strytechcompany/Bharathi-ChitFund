@@ -4,8 +4,21 @@ import chitService from '../services/chitService';
 import teamService from '../services/teamService';
 import memberService from '../services/memberService';
 import paymentService from '../services/paymentService';
+import { printTeamReport } from '../utils/pdfReceipt';
 
 const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const REPORT_TYPES = [
+  { id: 'daily', label: 'Daily Report' },
+  { id: 'weekly', label: 'Weekly Report' },
+  { id: 'monthly', label: 'Monthly Report' },
+  { id: 'all', label: 'All Members Report' },
+];
+
+const paymentDateOf = (p) => new Date(p.paymentDate || p.paidDate || p.createdAt);
+const isSameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const startOfWeek = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; };
+const endOfWeek = (d) => { const x = startOfWeek(d); x.setDate(x.getDate() + 6); x.setHours(23, 59, 59, 999); return x; };
 
 const genMonths = (startDate, durationMonths) => {
   if (!startDate) return [];
@@ -31,6 +44,8 @@ const Reports = () => {
   const [selectedSchemeId, setSelectedSchemeId] = useState('');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [reportType, setReportType] = useState('all');
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   const loadAll = async () => {
     setLoading(true);
@@ -93,6 +108,108 @@ const Reports = () => {
     setSelectedTeamId('');
   };
 
+  // Flat (all-time) payments per member, used for lifetime totals + PDF export
+  const flatPaymentsForTeam = (team) => {
+    const teamPayments = paymentMap[String(team._id)] || {};
+    const flat = {};
+    (membersMap[String(team._id)] || []).forEach(m => {
+      flat[m._id] = Object.values(teamPayments[String(m._id)] || {}).flat();
+    });
+    return flat;
+  };
+
+  const windowConfig = {
+    daily: {
+      label: `Paid on ${new Date(selectedDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}`,
+      filter: (p) => isSameDay(paymentDateOf(p), new Date(selectedDate)),
+    },
+    weekly: {
+      label: 'Paid This Week',
+      filter: (p) => { const d = paymentDateOf(p); const now = new Date(); return d >= startOfWeek(now) && d <= endOfWeek(now); },
+    },
+    monthly: {
+      label: 'Paid This Month',
+      filter: (p) => { const now = new Date(); return p.month === now.getMonth() + 1 && p.year === now.getFullYear(); },
+    },
+  };
+
+  // Render a summary report (Daily / Weekly / Monthly) — one row per member
+  const renderSummaryReport = (team) => {
+    const teamMembers = membersMap[String(team._id)] || [];
+    const flat = flatPaymentsForTeam(team);
+    const { label: windowLabel, filter } = windowConfig[reportType];
+
+    const rows = teamMembers.map(m => {
+      const paid = (flat[m._id] || []).filter(p => p.status === 'paid');
+      const totalPaid = paid.reduce((s, p) => s + Number(p.amount || 0), 0);
+      const chitAmount = Number(m.chitAmount || 0);
+      const pending = Math.max(chitAmount - totalPaid, 0);
+      const windowPaid = paid.filter(filter).reduce((s, p) => s + Number(p.amount || 0), 0);
+      return { member: m, windowPaid, totalPaid, pending, days: paid.length };
+    });
+
+    const totalCollection = rows.reduce((s, r) => s + r.totalPaid, 0);
+
+    return (
+      <div key={team._id} className="bg-white rounded-xl border border-gray-100 mb-8 overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+          <div>
+            <p className="font-bold text-gray-800 text-base">{team.teamName}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{windowLabel} · {teamMembers.length} members</p>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-[10px] text-gray-400 uppercase font-semibold">Total Collection</p>
+              <p className="text-xl font-bold text-gold">₹{totalCollection.toLocaleString()}</p>
+            </div>
+            <button
+              onClick={() => printTeamReport(team, teamMembers, flat, {
+                title: `${team.teamName} — ${REPORT_TYPES.find(r => r.id === reportType).label}`,
+                fileName: `${team.teamName}_${reportType}_report`,
+                windowLabel,
+                windowPaid: (m, history) => history.filter(filter).reduce((s, p) => s + Number(p.amount || 0), 0),
+              })}
+              className="px-3 py-1.5 bg-gold/10 text-gold text-xs font-semibold rounded-lg hover:bg-gold/20"
+            >
+              Print
+            </button>
+          </div>
+        </div>
+
+        {teamMembers.length === 0 ? (
+          <div className="p-8 text-center text-gray-400 text-sm">No members in this team yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-max border-collapse text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="text-left px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100">Member Name</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100">{windowLabel}</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100">Total Paid</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100">Pending Amount</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-r border-gray-100">Days Completed</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold text-gold uppercase tracking-wider bg-gold/5">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ member, windowPaid, totalPaid, pending, days }) => (
+                  <tr key={member._id} className="border-b border-gray-50 hover:bg-gray-50/60">
+                    <td className="px-4 py-3 font-semibold text-gray-800 border-r border-gray-100">{member.fullName}</td>
+                    <td className="px-4 py-3 text-right text-gray-700 border-r border-gray-100">{windowPaid > 0 ? `₹${windowPaid.toLocaleString()}` : <span className="text-gray-300">—</span>}</td>
+                    <td className="px-4 py-3 text-right text-gray-700 border-r border-gray-100">₹{totalPaid.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-gray-700 border-r border-gray-100">₹{pending.toLocaleString()}</td>
+                    <td className="px-4 py-3 text-right text-gray-700 border-r border-gray-100">{days}</td>
+                    <td className="px-4 py-3 text-right font-bold text-gold bg-gold/5">₹{pending.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Render individual team report table
   const renderTeamReport = (team) => {
     const teamMembers = membersMap[String(team._id)] || [];
@@ -132,9 +249,20 @@ const Reports = () => {
               {` · ${teamMembers.length} members`}
             </p>
           </div>
-          <div className="text-right">
-            <p className="text-[10px] text-gray-400 uppercase font-semibold">Grand Total</p>
-            <p className="text-xl font-bold text-gold">₹{grandTotal.toLocaleString()}</p>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-[10px] text-gray-400 uppercase font-semibold">Grand Total</p>
+              <p className="text-xl font-bold text-gold">₹{grandTotal.toLocaleString()}</p>
+            </div>
+            <button
+              onClick={() => printTeamReport(team, teamMembers, flatPaymentsForTeam(team), {
+                title: `${team.teamName} — All Members Report`,
+                fileName: `${team.teamName}_all_members_report`,
+              })}
+              className="px-3 py-1.5 bg-gold/10 text-gold text-xs font-semibold rounded-lg hover:bg-gold/20"
+            >
+              Print
+            </button>
           </div>
         </div>
 
@@ -211,6 +339,27 @@ const Reports = () => {
         <p className="text-sm text-gray-500">Comprehensive overview of all active teams and payments.</p>
       </div>
 
+      {/* Report type tabs */}
+      <div className="flex items-center gap-2 mb-4">
+        {REPORT_TYPES.map(rt => (
+          <button
+            key={rt.id}
+            onClick={() => setReportType(rt.id)}
+            className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${reportType === rt.id ? 'bg-gold text-white' : 'bg-white border border-gray-200 text-gray-500 hover:border-gold hover:text-gold'}`}
+          >
+            {rt.label}
+          </button>
+        ))}
+        {reportType === 'daily' && (
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value)}
+            className="ml-2 border border-gray-200 rounded-lg px-3 py-2 text-xs outline-none focus:border-gold"
+          />
+        )}
+      </div>
+
       {/* Scheme + Team selectors (now act as filters) */}
       <div className="bg-white rounded-xl border border-gray-100 p-5 mb-6 shadow-sm">
         <div className="grid grid-cols-2 gap-4">
@@ -250,7 +399,7 @@ const Reports = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {visibleTeams.map(team => renderTeamReport(team))}
+          {visibleTeams.map(team => reportType === 'all' ? renderTeamReport(team) : renderSummaryReport(team))}
         </div>
       )}
     </div>

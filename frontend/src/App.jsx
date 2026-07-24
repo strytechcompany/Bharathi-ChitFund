@@ -17,6 +17,17 @@ import Reports from './pages/Reports';
 import Notifications from './pages/Notifications';
 import Completed from './pages/Completed';
 import Settings from './pages/Settings';
+import FPayment from './pages/FPayment';
+import FPaymentCustomers from './pages/FPaymentCustomers';
+import CreateFPaymentCustomer from './pages/CreateFPaymentCustomer';
+import EditFPaymentCustomer from './pages/EditFPaymentCustomer';
+import FPaymentCustomerDetails from './pages/FPaymentCustomerDetails';
+import FPaymentPayments from './pages/FPaymentPayments';
+import FPaymentCreate from './pages/FPaymentCreate';
+import FPaymentEdit from './pages/FPaymentEdit';
+import FPaymentDetails from './pages/FPaymentDetails';
+import FPaymentTeams from './pages/FPaymentTeams';
+import FPaymentTeamDetails from './pages/FPaymentTeamDetails';
 
 const App = () => (
   <AuthProvider>
@@ -44,6 +55,17 @@ const App = () => (
             <Route path="/reports" element={<Reports />} />
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/fpayment" element={<FPayment />} />
+            <Route path="/fpayment/customers" element={<FPaymentCustomers />} />
+            <Route path="/fpayment/customers/create" element={<CreateFPaymentCustomer />} />
+            <Route path="/fpayment/customers/:id" element={<FPaymentCustomerDetails />} />
+            <Route path="/fpayment/customers/:id/edit" element={<EditFPaymentCustomer />} />
+            <Route path="/fpayment/payments" element={<FPaymentPayments />} />
+            <Route path="/fpayment/payments/create" element={<FPaymentCreate />} />
+            <Route path="/fpayment/payments/:id" element={<FPaymentDetails />} />
+            <Route path="/fpayment/payments/:id/edit" element={<FPaymentEdit />} />
+            <Route path="/fpayment/teams" element={<FPaymentTeams />} />
+            <Route path="/fpayment/teams/:teamId" element={<FPaymentTeamDetails />} />
           </Route>
         </Route>
 

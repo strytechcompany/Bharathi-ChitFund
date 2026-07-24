@@ -9,8 +9,10 @@ const paymentSchema = new mongoose.Schema({
   week: { type: Number }, // Optional, 1-5
   day: { type: Number }, // Optional, 1-31
   paidDate: { type: Date },
+  paymentDate: { type: Date },
   transactionId: { type: String, default: '' },
   notes: { type: String, default: '' },
+  createdBy: { type: String, default: '' },
   status: { type: String, enum: ['paid', 'unpaid', 'due', 'pending'], default: 'pending' },
 }, { timestamps: true });
 

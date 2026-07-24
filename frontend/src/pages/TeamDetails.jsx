@@ -8,6 +8,7 @@ import paymentService from '../services/paymentService';
 import customerService from '../services/customerService';
 import PaymentTracker from '../components/PaymentTracker';
 import { syncTeamToLocal, downloadTeamReport } from '../services/dataSyncService';
+import { printMemberReceipt } from '../utils/pdfReceipt';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MEMBER_EMPTY = { fullName: '', mobile: '', address: '', monthlyPadi: '', paymentFrequency: 'monthly', notes: '' };
@@ -374,6 +375,7 @@ const TeamDetails = () => {
                           <div><p className="text-xs text-gray-400">Chit Amount</p><p className="font-bold text-gray-800">₹{Number(m.chitAmount).toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">{m.paymentFrequency === 'daily' ? 'Daily' : m.paymentFrequency === 'weekly' ? 'Weekly' : 'Monthly'} Pay</p><p className="font-bold text-gray-800">₹{Number(m.monthlyPadi).toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">Total Paid</p><p className="font-bold text-gray-800">₹{totalPaid.toLocaleString()}</p></div>
+                          <div><p className="text-xs text-gray-400">Remaining Balance</p><p className="font-bold text-gray-800">₹{Math.max(Number(m.chitAmount || 0) - totalPaid, 0).toLocaleString()}</p></div>
                           <div><p className="text-xs text-gray-400">Days Completed</p><p className="font-bold text-gray-800">{fullyPaidDays}</p></div>
                           <div><p className="text-xs text-gray-400">Weeks Completed</p><p className="font-bold text-gray-800">{fullyPaidWeeks}</p></div>
                           <div><p className="text-xs text-gray-400">Months Completed</p><p className="font-bold text-gray-800">{fullyPaidMonths} / {m.totalMonths}</p></div>
@@ -384,6 +386,12 @@ const TeamDetails = () => {
                             className="flex-1 py-2 border border-gray-200 rounded-lg text-xs font-semibold text-gray-600 hover:bg-white"
                           >
                             Edit Member Profile
+                          </button>
+                          <button
+                            onClick={e => { e.stopPropagation(); printMemberReceipt(m, team, payments); }}
+                            className="flex-1 py-2 border border-gold/30 rounded-lg text-xs font-semibold text-gold hover:bg-gold/5"
+                          >
+                            Print Receipt
                           </button>
                           <button
                             onClick={e => { e.stopPropagation(); handleDelete(m._id); }}
