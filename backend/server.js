@@ -8,7 +8,10 @@ connectDB();
 
 const app = express();
 app.use(express.json());
-app.use(cors({ origin: process.env.CLIENT_URL || '*' }));
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(o => o.trim())
+  : '*';
+app.use(cors({ origin: allowedOrigins }));
 
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
