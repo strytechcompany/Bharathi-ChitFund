@@ -7,11 +7,13 @@ dotenv.config();
 connectDB();
 
 const app = express();
-app.use(express.json());
+
 const allowedOrigins = process.env.CLIENT_URL
-  ? process.env.CLIENT_URL.split(',').map(o => o.trim())
+  ? process.env.CLIENT_URL.split(',').map(o => o.trim()).filter(Boolean)
   : '*';
 app.use(cors({ origin: allowedOrigins }));
+
+app.use(express.json());
 
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
