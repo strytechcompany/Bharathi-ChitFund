@@ -9,7 +9,7 @@ connectDB();
 const app = express();
 
 const allowedOrigins = process.env.CLIENT_URL
-  ? process.env.CLIENT_URL.split(',').map(o => o.trim()).filter(Boolean)
+  ? process.env.CLIENT_URL.split(',').map(o => o.trim().replace(/\/+$/, '')).filter(Boolean)
   : '*';
 app.use(cors({ origin: allowedOrigins }));
 
